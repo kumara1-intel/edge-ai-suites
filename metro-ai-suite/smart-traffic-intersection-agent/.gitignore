@@ -87,3 +87,4 @@ share/python-wheels/
 MANIFEST
 
 **/docker/ri-compose.yaml
+**/docker/kata-resolv.conf

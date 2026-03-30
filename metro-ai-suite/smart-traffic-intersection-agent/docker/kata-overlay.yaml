@@ -1,0 +1,61 @@
+# Copyright (C) 2025 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+# Kata Containers overlay - included automatically when deploying with --secure-setup flag.
+# Adds Kata VM runtime, DNS relay, and resolv.conf mounts for dlstreamer and vlm services.
+
+services:
+  dlstreamer-pipeline-server:
+    runtime: io.containerd.kata.v2
+    privileged: false
+    devices: []
+    device_cgroup_rules: []
+    group_add: []
+    volumes:
+      - ./kata-resolv.conf:/etc/resolv.conf:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+        reservations:
+          cpus: '2'
+
+  vlm-openvino-serving:
+    runtime: io.containerd.kata.v2
+    devices: []
+    healthcheck:
+      start_period: 180s
+    volumes:
+      - ./kata-resolv.conf:/etc/resolv.conf:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+        reservations:
+          cpus: '2'
+
+  kata-dns-relay:
+    image: coredns/coredns:1.14.2
+    networks:
+      scenescape:
+        ipv4_address: 172.20.0.200
+    configs:
+      - source: corefile
+        target: /Corefile
+    command: -conf /Corefile
+    restart: on-failure:5
+
+networks:
+  scenescape:
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+configs:
+  corefile:
+    content: |
+      . {
+          forward . 127.0.0.11
+          errors
+          #log
+      }

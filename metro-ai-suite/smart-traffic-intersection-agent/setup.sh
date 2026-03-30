@@ -42,11 +42,12 @@ export AGENT_UI_PORT=$(grep -oP '"agent_ui_port"\s*:\s*"\K[^"]+' "$DEPLOYMENT_CO
 if [ "$#" -eq 0 ] || ([ "$#" -eq 1 ] && [ "$1" = "--help" ]); then
     # If no valid argument is passed, print usage information
     echo -e "-----------------------------------------------------------------"
-    echo -e "${YELLOW}USAGE: ${GREEN}source setup.sh ${BLUE}[--setenv | --setup | --run | --restart [agent|deps|all] | --stop | --clean | --help]"
+    echo -e "${YELLOW}USAGE: ${GREEN}source setup.sh ${BLUE}[--setenv | --setup | --secure-setup | --run | --restart [agent|deps|all] | --stop | --clean | --help]"
     echo -e "${YELLOW}"
     echo -e "  --setenv:                 Set environment variables without building image or starting any containers"
     echo -e "  --build:                  Build the service images without starting containers"
     echo -e "  --setup:                  Build and run the services"
+    echo -e "  --secure-setup:           Build and run with Kata container isolation"
     echo -e "  --run:                    Start the services without building image (if already built)"
     echo -e "  --restart [service_type]: Restart services"
     echo -e "                              • agent         - Restart Backend/UI service for Smart Traffic Intersection Agent"
@@ -65,7 +66,7 @@ elif [ "$#" -gt 2 ]; then
     echo -e "${YELLOW}Use --help for usage information${NC}"
     return 1
 
-elif [ "$1" != "--help" ] && [ "$1" != "--setenv" ] && [ "$1" != "--run" ] && [ "$1" != "--build" ] && [ "$1" != "--setup" ] && [ "$1" != "--restart" ] && [ "$1" != "--stop" ] && [ "$1" != "--clean" ]; then
+elif [ "$1" != "--help" ] && [ "$1" != "--setenv" ] && [ "$1" != "--run" ] && [ "$1" != "--build" ] && [ "$1" != "--setup" ] && [ "$1" != "--secure-setup" ] && [ "$1" != "--restart" ] && [ "$1" != "--stop" ] && [ "$1" != "--clean" ]; then
     # Default case for unrecognized option
     echo -e "${RED}Unknown option: $1 ${NC}"
     echo -e "${YELLOW}Use --help for usage information${NC}"
@@ -88,7 +89,7 @@ elif [ "$1" = "--stop" ] || [ "$1" = "--clean" ]; then
     
     # check if ri-compose.yaml exists and run docker compose down accordingly
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" -p ${PROJECT_NAME} down 2> /dev/null
+        docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" -f "${APP_DIR}/docker/kata-overlay.yaml" -p ${PROJECT_NAME} down 2> /dev/null
     else
         docker compose -f "${APP_DIR}/docker/agent-compose.yaml" -p ${PROJECT_NAME} down 2> /dev/null
     fi
@@ -177,6 +178,10 @@ check_and_setup_dependencies() {
     rm "$APP_DIR/docker/ri-compose.yaml" 2> /dev/null 
     ln -sf "$DEPS_DIR/compose-scenescape.yml" "$APP_DIR/docker/ri-compose.yaml"
 
+    # Create symbolic link to kata-resolv.conf in docker dir of agent application
+    rm "$APP_DIR/docker/kata-resolv.conf" 2> /dev/null
+    ln -sf "$DEPS_DIR/kata-resolv.conf" "$APP_DIR/docker/kata-resolv.conf"
+
     return 0
 }
 
@@ -193,6 +198,13 @@ fi
 # ============================================================================
 # END Dependencies
 # ============================================================================
+
+# Set Kata overlay if --secure-setup flag is provided
+KATA_OVERLAY=""
+if [ "$1" = "--secure-setup" ]; then
+    KATA_OVERLAY="-f ${APP_DIR}/docker/kata-overlay.yaml"
+    echo -e "${BLUE}==> Kata container security enabled (runtime: io.containerd.kata.v2)${NC}"
+fi
 
 # Export required environment variables (HOST_IP already set above)
 export TAG=${TAG:-latest}
@@ -295,7 +307,7 @@ build_service() {
 
     # Build the service images
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" -p $PROJECT_NAME build
+        docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME build
     else
         docker compose -f "${APP_DIR}/docker/agent-compose.yaml" -p $PROJECT_NAME build
     fi
@@ -313,7 +325,7 @@ build_and_start_service() {
     echo -e "${BLUE}==> Starting Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${BLUE}...${NC}"
 
     # Build and start the services
-    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" -p $PROJECT_NAME up -d --build
+    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d --build
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Smart-Traffic-Intersection-Agent Services built and started successfully!${NC}"
@@ -329,7 +341,7 @@ start_service() {
     echo -e "${BLUE}==> Starting Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${BLUE}...${NC}"
     
     # Start the services
-    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" -p $PROJECT_NAME up -d
+    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Smart-Traffic-Intersection-Agent Services started successfully!${NC}"
@@ -356,7 +368,7 @@ restart_service() {
                 return 1
             fi
             
-            docker compose -f "${APP_DIR}/docker/agent-compose.yaml" -p $PROJECT_NAME up -d --force-recreate
+            docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d --force-recreate
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}Traffic Intersection Agent Backend/UI restarted successfully!${NC}"
@@ -387,7 +399,7 @@ restart_service() {
             
             # Start with force-recreate to ensure env vars are picked up
             echo -e "${BLUE}==> Restarting dependencies (Smart Intersection RI) ...${NC}"
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -p $PROJECT_NAME up -d --force-recreate
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d --force-recreate
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}Dependencies restarted successfully!${NC}"
@@ -408,14 +420,14 @@ restart_service() {
             fi
             
             # Stop all services
-            docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" -p $PROJECT_NAME down
+            docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME down
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to stop services for Traffic Intersection Agent!${NC}"
                 return 1
             fi
 
             # Restart all services
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" -p $PROJECT_NAME up -d --force-recreate  
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d --force-recreate  
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}All dependencies and Backend/UI services for Traffic Intersection Agent restarted successfully!${NC}"
@@ -440,6 +452,9 @@ case $1 in
         build_service
         ;;
     --setup)
+        build_and_start_service
+        ;;
+    --secure-setup)
         build_and_start_service
         ;;
     --restart)
