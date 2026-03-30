@@ -3,14 +3,12 @@
 
 import pathlib
 import shutil
+import os
 from io import BytesIO
-from datetime import datetime, timezone
 from typing import Any, BinaryIO, Iterator, Optional, Union
 
 from minio import Minio
 from minio.error import S3Error
-
-from utils.config_loader import config
 
 
 class MinioStore:
@@ -22,24 +20,14 @@ class MinioStore:
 
     @classmethod
     def from_config(cls) -> "MinioStore":
-        """Create a MinioStore from the content_search.minio section of config.yaml."""
-        cfg = config.content_search.minio
+        server     = os.getenv("MINIO_SERVER", "127.0.0.1:9000")
+        access_key = os.getenv("MINIO_ROOT_USER", "minioadmin")
+        secret_key = os.getenv("MINIO_ROOT_PASSWORD", "minioadmin")
+        bucket     = os.getenv("MINIO_BUCKET", "content-search")
+        secure     = os.getenv("MINIO_SECURE", "False").lower() in ("true", "1", "t")
 
-        server = cfg.server
-        access_key = cfg.root_user
-        secret_key = cfg.root_password
-        secure = bool(getattr(cfg, "secure", False))
-        bucket = cfg.bucket
-
-        if not server:
-            raise RuntimeError("Missing content_search.minio.server in config.yaml")
-        if not access_key or not secret_key:
-            raise RuntimeError("Missing content_search.minio.root_user/root_password in config.yaml")
-        if not bucket:
-            raise RuntimeError("Missing content_search.minio.bucket in config.yaml")
-
-        client = Minio(str(server), str(access_key), str(secret_key), secure=secure)
-        return cls(client, str(bucket))
+        client = Minio(server, access_key=access_key, secret_key=secret_key, secure=secure)
+        return cls(client, bucket)
 
     @property
     def client(self) -> Minio:

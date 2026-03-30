@@ -3,53 +3,60 @@
 
 import logging
 import copy
+import os
 
 from moviepy import VideoFileClip
 from PIL import Image
 
-from content_search.providers.file_ingest_and_retrieve.embedding import get_model_handler, EmbeddingModel
+from providers.file_ingest_and_retrieve.embedding import get_model_handler, EmbeddingModel
 from llama_index.embeddings.huggingface_openvino import OpenVINOEmbedding
 
-from content_search.providers.chromadb_wrapper.chroma_client import ChromaClientWrapper
-from content_search.providers.file_ingest_and_retrieve.document_parser import DocumentParser
-from content_search.providers.file_ingest_and_retrieve.detector import Detector
-from content_search.providers.file_ingest_and_retrieve.utils import generate_unique_id, encode_image_to_base64
-from utils.config_loader import config
+from providers.chromadb_wrapper.chroma_client import ChromaClientWrapper
+from providers.file_ingest_and_retrieve.document_parser import DocumentParser
+from providers.file_ingest_and_retrieve.detector import Detector
+from providers.file_ingest_and_retrieve.utils import generate_unique_id, encode_image_to_base64
 
 logger = logging.getLogger(__name__)
-
-_cfg = config.content_search.file_ingest
-
 
 def create_chroma_data(embedding, meta=None):
     return {"id": generate_unique_id(), "meta": meta, "vector": embedding}
 
 
-class Indexer:
-    def __init__(self, collection_name="default"):
-        self.client = ChromaClientWrapper()
+def create_chroma_data(embedding, meta=None):
+    return {"id": generate_unique_id(), "meta": meta, "vector": embedding}
 
+class Indexer:
+    def __init__(self, collection_name="content-search"):
+        self.client = ChromaClientWrapper()
+        run_device = os.getenv("INGEST_DEVICE", "CPU")
         self.visual_collection_name = collection_name
-        handler = get_model_handler(_cfg.visual_embedding_model)
+        visual_model_name = os.getenv("VISUAL_EMBEDDING_MODEL", "CLIP/clip-vit-b-16")
+        handler = get_model_handler(visual_model_name)
         handler.load_model()
+
         self.visual_embedding_model = EmbeddingModel(handler)
-        self.detector = Detector(device=_cfg.device)
+        self.detector = Detector(device=run_device)
         self.visual_id_map = {}
         self.visual_db_inited = False
+
         if self.client.load_collection(collection_name=self.visual_collection_name):
             logger.info(f"Collection '{self.visual_collection_name}' already exist.")
             self.visual_db_inited = True
             self._recover_id_map(self.visual_collection_name, self.visual_id_map)
 
         self.document_collection_name = f"{collection_name}_documents"
+
+        doc_model_path = os.getenv("DOC_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
+
         self.document_embedding_model = OpenVINOEmbedding(
-            model_id_or_path=_cfg.doc_embedding_model,
-            device=_cfg.device,
+            model_id_or_path=doc_model_path,
+            device=run_device,
         )
+
         self.document_parser = DocumentParser(
             chunk_size=250,
             chunk_overlap=50,
-            # embed_model=self.document_embedding_model,  # ✅ OpenVINOEmbedding 实例，不是字符串
+            # embed_model=self.document_embedding_model,
             # semantic_breakpoint_percentile=95,
             # semantic_min_chunk_size=150,
             extract_images=False,  # Don't extract images for now

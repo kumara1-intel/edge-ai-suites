@@ -1,7 +1,12 @@
+#
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
 from sqlalchemy.orm import Session
 from typing import Optional, Any, Dict
-from core.models import AITask
-from schemas.task import TaskStatus
+from utils.core_models import AITask
+from utils.schemas_task import TaskStatus
 from uuid import UUID
 
 class TaskCRUD:

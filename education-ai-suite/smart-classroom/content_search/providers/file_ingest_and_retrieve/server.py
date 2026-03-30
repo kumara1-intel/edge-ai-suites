@@ -3,6 +3,7 @@
 
 import logging
 import warnings
+import os
 
 class _ShortNameFormatter(logging.Formatter):
     def format(self, record):
@@ -34,10 +35,9 @@ from typing import Optional, Dict, Union
 
 import tempfile
 
-from content_search.providers.minio_wrapper.minio_client import MinioStore
-from content_search.providers.file_ingest_and_retrieve.indexer import Indexer
-from content_search.providers.file_ingest_and_retrieve.retriever import ChromaRetriever
-from utils.config_loader import config
+from providers.minio_wrapper.minio_client import MinioStore
+from providers.file_ingest_and_retrieve.indexer import Indexer
+from providers.file_ingest_and_retrieve.retriever import ChromaRetriever
 
 logger = logging.getLogger("visual_data_service")
 
@@ -82,12 +82,12 @@ class IngestTextRequest(_IngestRequestBase):
 
 app = FastAPI()
 
-_collection_name = config.content_search.file_ingest.collection_name
+_collection_name = os.getenv("CHROMA_COLLECTION_NAME", "content-search")
 
 indexer = Indexer(collection_name=_collection_name)
 retriever = ChromaRetriever(collection_name=_collection_name)
-minio_store = MinioStore.from_config()
 
+minio_store = MinioStore.from_config()
 
 @app.get("/v1/dataprep/health")
 def health():

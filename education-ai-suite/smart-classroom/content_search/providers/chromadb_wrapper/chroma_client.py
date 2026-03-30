@@ -1,17 +1,24 @@
+#
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
+#
 
 import logging
 import chromadb
-from utils.config_loader import config
-
-logger = logging.getLogger(__name__)
-
-_chroma_cfg = config.content_search.chromadb
-
+import os
 
 class ChromaClientWrapper:
-    def __init__(self, host: str = _chroma_cfg.host, port: int = _chroma_cfg.port):
+    def __init__(self, host: str = None, port: int = None):
+
+        if host is None:
+            host = os.getenv("CHROMA_HOST", "127.0.0.1")
+        if port is None:
+            env_port = os.getenv("CHROMA_PORT", "9090")
+            try:
+                port = int(env_port)
+            except ValueError:
+                port = 9090
+
         self.client = chromadb.HttpClient(host=host, port=port)
         self.collection = None
 

@@ -1,13 +1,18 @@
+#
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from database import get_db
-from services.task_service import task_service
-from services.storage_service import storage_service
-from services.search_service import search_service
+from utils.database import get_db
+from utils.task_service import task_service
+from utils.storage_service import storage_service
+from utils.search_service import search_service
 import urllib.parse
 import mimetypes
-from core.responses import resp_200
+from utils.core_responses import resp_200
 
 router = APIRouter()
 
@@ -26,7 +31,55 @@ async def upload_video(background_tasks: BackgroundTasks, file: UploadFile = Fil
         message="File received, processing started."
     )
 
-# @router.post("/ingest")
+@router.post("/ingest")
+async def ingest_existing_file(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    bucket_name = payload.get("bucket_name", "content-search")
+    file_key = payload.get("file_key")
+    if not file_key:
+        raise HTTPException(status_code=400, detail="file_key is required")
+
+    minio_payload = {
+        "file_key": file_key,
+        "bucket_name": bucket_name,
+    }
+    result = await task_service.handle_file_ingest(db, minio_payload, background_tasks)
+
+    return resp_200(
+        data={
+            "task_id": str(result["task_id"]),
+            "status": result["status"],
+            "file_key": file_key
+        },
+        message="Ingestion process started for existing file"
+    )
+
+@router.post("/ingest-text")
+async def ingest_raw_text(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    text = payload.get("text")
+    if not text:
+        raise HTTPException(status_code=400, detail="Text content is required")
+
+    result = await task_service.handle_text_ingest(
+        db,
+        payload,
+        background_tasks
+    )
+
+    return resp_200(
+        data={
+            "task_id": str(result["task_id"]),
+            "status": result["status"]
+        },
+        message="Text ingestion started"
+    )
 
 @router.post("/upload-ingest")
 async def upload_file_with_ingest(

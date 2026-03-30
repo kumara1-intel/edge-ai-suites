@@ -1,3 +1,8 @@
+#
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
 import uuid
 import logging
 from fastapi import UploadFile
@@ -13,7 +18,7 @@ class StorageService:
 
     def _try_initialize(self):
         try:
-            from providers.content_search_minio.minio_client import MinioStore
+            from providers.minio_wrapper.minio_client import MinioStore
             self._store = MinioStore.from_config()
             self._store.ensure_bucket()
             self._error_msg = None

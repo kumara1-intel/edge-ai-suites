@@ -1,3 +1,8 @@
+#
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
 """Video Preprocess Service (decode/chunk/sample → summarize → MinIO)
 - downloads the video from MinIO to a temp file
 - chunks the video by time (FrameSampler.iter_chunks)
@@ -30,32 +35,34 @@ from fastapi.responses import StreamingResponse
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from frame_sampler import FrameSampler
+from providers.video_preprocess.frame_sampler import FrameSampler
 
-from content_search.providers.minio_wrapper.minio_client import MinioStore
+from providers.minio_wrapper.minio_client import MinioStore
 
-from utils.config_loader import config as _svc_config
+_vlm_host = os.getenv("VLM_HOST", "127.0.0.1")
+_vlm_port = os.getenv("VLM_PORT", "9900")
+VLM_ENDPOINT: str = f"http://{_vlm_host}:{_vlm_port}/v1/chat/completions"
 
-_pre_cfg   = _svc_config.content_search.video_preprocess
-_vlm_cfg   = _svc_config.content_search.vlm
-_minio_cfg = _svc_config.content_search.minio
-_ingest_cfg = _svc_config.content_search.file_ingest
+VLM_TIMEOUT_SECONDS: int = int(os.getenv("VLM_TIMEOUT_SECONDS", 300))
+DEFAULT_CHUNK_DURATION_S: int = int(os.getenv("CHUNK_DURATION_S", 30))
+DEFAULT_CHUNK_OVERLAP_S: int = int(os.getenv("CHUNK_OVERLAP_S", 4))
+DEFAULT_MAX_NUM_FRAMES: int = int(os.getenv("MAX_NUM_FRAMES", 8))
+DEFAULT_FRAME_WIDTH: int = int(os.getenv("FRAME_WIDTH", 0))
+DEFAULT_FRAME_HEIGHT: int = int(os.getenv("FRAME_HEIGHT", 0))
 
-VLM_ENDPOINT: str = f"http://{_vlm_cfg.host_addr}:{_vlm_cfg.port}/v1/chat/completions"
-VLM_TIMEOUT_SECONDS: int = int(_pre_cfg.vlm_timeout_seconds)
-DEFAULT_CHUNK_DURATION_S: int = int(_pre_cfg.chunk_duration_s)
-DEFAULT_CHUNK_OVERLAP_S: int = int(_pre_cfg.chunk_overlap_s)
-DEFAULT_MAX_NUM_FRAMES: int = int(_pre_cfg.max_num_frames)
-DEFAULT_FRAME_WIDTH: int = int(_pre_cfg.frame_width)
-DEFAULT_FRAME_HEIGHT: int = int(_pre_cfg.frame_height)
-if getattr(_vlm_cfg, "ingest_enabled", False):
+INGEST_ENABLED = os.getenv("VLM_INGEST_ENABLED", "True").lower() in ("true", "1", "t")
+
+if INGEST_ENABLED:
+    _ingest_host = os.getenv("INGEST_HOST", "127.0.0.1")
+    _ingest_port = os.getenv("INGEST_PORT", "9990")
     INGEST_ENDPOINT: Optional[str] = (
-        f"http://{_ingest_cfg.host_addr}:{_ingest_cfg.port}/v1/dataprep/ingest_text"
+        f"http://{_ingest_host}:{_ingest_port}/v1/dataprep/ingest_text"
     )
-    INGEST_BUCKET: str = str(_minio_cfg.bucket)
+    INGEST_BUCKET: str = os.getenv("MINIO_BUCKET", "content-search")
 else:
     INGEST_ENDPOINT = None
     INGEST_BUCKET = ""
+
 
 class PreprocessRequest(BaseModel):
     minio_video_key: str = Field(

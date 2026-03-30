@@ -1,11 +1,16 @@
+#
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import Optional, List
-from database import get_db
-from crud.task_crud import task_crud
+from utils.database import get_db
+from utils.crud_task import task_crud
 from uuid import UUID
-from core.models import AITask
-from core.responses import resp_200
+from utils.core_models import AITask
+from utils.core_responses import resp_200
 
 router = APIRouter()
 @router.get("/list")

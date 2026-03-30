@@ -9,7 +9,7 @@ from PIL import Image
 import numpy as np
 import openvino as ov
 
-from content_search.providers.file_ingest_and_retrieve.yolox_utils import preproc, multiclass_nms, demo_postprocess
+from providers.file_ingest_and_retrieve.yolox_utils import preproc, multiclass_nms, demo_postprocess
 
 MODEL_DIR = "./models"
 

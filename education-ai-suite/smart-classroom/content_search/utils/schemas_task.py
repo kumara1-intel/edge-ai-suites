@@ -1,3 +1,8 @@
+#
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
 import os
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 from typing import Optional, Any

@@ -1,6 +1,10 @@
-# core/models.py
+#
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+
 from sqlalchemy import Column, String, JSON, DateTime, Integer
-from database import Base
+from utils.database import Base
 from datetime import datetime
 import uuid
 
