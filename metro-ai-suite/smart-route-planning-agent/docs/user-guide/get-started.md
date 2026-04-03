@@ -73,25 +73,11 @@ Agent and multiple Smart Traffic Intersection Agent edge nodes.
 
 ### Architecture Overview
 
-```
-                    ┌─────────────────────────────┐
-                    │  Smart Route Planning Agent │
-                    │       (Central Node)        │
-                    └──────────────┬──────────────┘
-                                   │
-           ┌───────────────────────┼───────────────────────┐
-           │                       │                       │
-           ▼                       ▼                       ▼
-┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐
-│ Smart Traffic       │ │ Smart Traffic       │ │ Smart Traffic       │
-│ Intersection Agent  │ │ Intersection Agent  │ │ Intersection Agent  │
-│ (Edge Node 1)       │ │ (Edge Node 2)       │ │ (Edge Node N)       │
-└─────────────────────┘ └─────────────────────┘ └─────────────────────┘
-```
+![Architecture Overview](./_assets/smart-route-agent-architecture-overview.svg "Architecture Overview")
 
 ### Multi-Node Deployment Prerequisites
 
-1. Deploy the [Smart Traffic Intersection Agent](../../../smart-traffic-intersection-agent/docs/user-guide/get-started.md#quick-start-with-setup-script) on each edge node.
+1. Deploy the [Smart Traffic Intersection Agent](https://docs.openedgeplatform.intel.com/dev/edge-ai-suites/smart-traffic-intersection-agent/get-started.html#quick-start-with-setup-script) on each edge node.
 2. Ensure network connectivity between the central node and edge nodes.
 3. Note the IP address and port of each Smart Traffic Intersection Agent.
 
