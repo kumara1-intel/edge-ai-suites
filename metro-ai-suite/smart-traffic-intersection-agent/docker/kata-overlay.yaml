@@ -8,10 +8,8 @@ services:
   dlstreamer-pipeline-server:
     runtime: io.containerd.kata.v2
     privileged: false
-    devices: []
-    device_cgroup_rules: []
-    group_add: []
     volumes:
+      - dlstreamer-pipeline-server-pipeline-root:/var/cache/pipeline_root
       - ./kata-resolv.conf:/etc/resolv.conf:ro
     deploy:
       resources:
@@ -22,17 +20,18 @@ services:
 
   vlm-openvino-serving:
     runtime: io.containerd.kata.v2
-    devices: []
     healthcheck:
-      start_period: 180s
+      start_period: 300s
     volumes:
       - ./kata-resolv.conf:/etc/resolv.conf:ro
     deploy:
       resources:
         limits:
           cpus: '4'
+          memory: 12G
         reservations:
           cpus: '2'
+          memory: 8G
 
   kata-dns-relay:
     image: coredns/coredns:1.14.2
@@ -44,6 +43,11 @@ services:
         target: /Corefile
     command: -conf /Corefile
     restart: on-failure:5
+
+volumes:
+  dlstreamer-pipeline-server-pipeline-root:
+    driver_opts:
+      o: uid=1999,gid=1999
 
 networks:
   scenescape:
