@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Copyright (C) 2025 Intel Corporation
+# Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
 # Color codes for terminal output
@@ -37,17 +37,30 @@ export AGENT_UI_PORT=$(grep -oP '"agent_ui_port"\s*:\s*"\K[^"]+' "$DEPLOYMENT_CO
 [ "$AGENT_BACKEND_PORT" = "" ] && unset AGENT_BACKEND_PORT
 [ "$AGENT_UI_PORT" = "" ] && unset AGENT_UI_PORT
 
+# Set Kata overlay if ENABLE_TRUSTED_COMPUTE env variable is set
+KATA_OVERLAY=""
+if [ "$ENABLE_TRUSTED_COMPUTE" = "true" ]; then
+    KATA_OVERLAY="-f ${APP_DIR}/docker/kata-overlay.yaml"
+    echo -e "${BLUE}==> Trusted Compute security enabled ${NC}"
+fi
+
+# Validate GPU and Trusted Compute compatibility
+if [ "$ENABLE_TRUSTED_COMPUTE" = "true" ] && [ "$VLM_DEVICE" = "GPU" ]; then
+    echo -e "${RED}ERROR: GPU accelerator is not supported for Trusted Compute${NC}"
+    echo -e "${YELLOW}Please use VLM_DEVICE=CPU or disable Trusted Compute${NC}"
+    return 1
+fi
+
 
 # Setting command usage and invalid arguments handling before the actual setup starts
 if [ "$#" -eq 0 ] || ([ "$#" -eq 1 ] && [ "$1" = "--help" ]); then
     # If no valid argument is passed, print usage information
     echo -e "-----------------------------------------------------------------"
-    echo -e "${YELLOW}USAGE: ${GREEN}source setup.sh ${BLUE}[--setenv | --setup | --secure-setup | --run | --restart [agent|deps|all] | --stop | --clean | --help]"
+    echo -e "${YELLOW}USAGE: ${GREEN}source setup.sh ${BLUE}[--setenv | --setup | --run | --restart [agent|deps|all] | --stop | --clean | --help]"
     echo -e "${YELLOW}"
     echo -e "  --setenv:                 Set environment variables without building image or starting any containers"
     echo -e "  --build:                  Build the service images without starting containers"
     echo -e "  --setup:                  Build and run the services"
-    echo -e "  --secure-setup:           Build and run with Kata container isolation"
     echo -e "  --run:                    Start the services without building image (if already built)"
     echo -e "  --restart [service_type]: Restart services"
     echo -e "                              • agent         - Restart Backend/UI service for Smart Traffic Intersection Agent"
@@ -66,7 +79,7 @@ elif [ "$#" -gt 2 ]; then
     echo -e "${YELLOW}Use --help for usage information${NC}"
     return 1
 
-elif [ "$1" != "--help" ] && [ "$1" != "--setenv" ] && [ "$1" != "--run" ] && [ "$1" != "--build" ] && [ "$1" != "--setup" ] && [ "$1" != "--secure-setup" ] && [ "$1" != "--restart" ] && [ "$1" != "--stop" ] && [ "$1" != "--clean" ]; then
+elif [ "$1" != "--help" ] && [ "$1" != "--setenv" ] && [ "$1" != "--run" ] && [ "$1" != "--build" ] && [ "$1" != "--setup" ] && [ "$1" != "--restart" ] && [ "$1" != "--stop" ] && [ "$1" != "--clean" ]; then
     # Default case for unrecognized option
     echo -e "${RED}Unknown option: $1 ${NC}"
     echo -e "${YELLOW}Use --help for usage information${NC}"
@@ -89,9 +102,9 @@ elif [ "$1" = "--stop" ] || [ "$1" = "--clean" ]; then
     
     # check if ri-compose.yaml exists and run docker compose down accordingly
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" -f "${APP_DIR}/docker/kata-overlay.yaml" -p ${PROJECT_NAME} down 2> /dev/null
+        docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
     else
-        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" -p ${PROJECT_NAME} down 2> /dev/null
+        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
     fi
 
     if [ $? -ne 0 ]; then
@@ -198,13 +211,6 @@ fi
 # ============================================================================
 # END Dependencies
 # ============================================================================
-
-# Set Kata overlay if --secure-setup flag is provided
-KATA_OVERLAY=""
-if [ "$1" = "--secure-setup" ]; then
-    KATA_OVERLAY="-f ${APP_DIR}/docker/kata-overlay.yaml"
-    echo -e "${BLUE}==> Kata container security enabled (runtime: io.containerd.kata.v2)${NC}"
-fi
 
 # Export required environment variables (HOST_IP already set above)
 export TAG=${TAG:-latest}
@@ -452,9 +458,6 @@ case $1 in
         build_service
         ;;
     --setup)
-        build_and_start_service
-        ;;
-    --secure-setup)
         build_and_start_service
         ;;
     --restart)
