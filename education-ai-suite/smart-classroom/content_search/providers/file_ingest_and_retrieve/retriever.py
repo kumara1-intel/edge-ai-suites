@@ -1,38 +1,56 @@
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
+import os
+
 from chromadb import Where
 from PIL import Image
 import base64
 import io
 
-from providers.file_ingest_and_retrieve.embedding import get_model_handler, EmbeddingModel
-from llama_index.embeddings.huggingface_openvino import OpenVINOEmbedding
-
 from providers.chromadb_wrapper.chroma_client import ChromaClientWrapper
+from providers.file_ingest_and_retrieve.models import (
+    get_visual_embedding_model,
+    get_document_embedding_model,
+)
 
-import os
+logger = logging.getLogger(__name__)
 
 class ChromaRetriever:
-    def __init__(self, collection_name="default"):
+    def __init__(self, collection_name="default", visual_embedding_model=None, document_embedding_model=None):
         self.client = ChromaClientWrapper()
 
         self.visual_collection_name = collection_name
         self.client.load_collection(self.visual_collection_name)
-        visual_model_name = os.getenv("VISUAL_EMBEDDING_MODEL", "CLIP/clip-vit-b-16")
-        handler = get_model_handler(visual_model_name)
-        handler.load_model()
-        self.visual_embedding_model = EmbeddingModel(handler)
+
+        self.visual_embedding_model = visual_embedding_model or get_visual_embedding_model()
 
         self.document_collection_name = f"{collection_name}_documents"
         self.client.load_collection(self.document_collection_name)
 
-        doc_model_path = os.getenv("DOC_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-        run_device = os.getenv("INGEST_DEVICE", "CPU")
-        self.document_embedding_model = OpenVINOEmbedding(
-            model_id_or_path=doc_model_path,
-            device=run_device,
-        )
+        self.document_embedding_model = document_embedding_model or get_document_embedding_model()
+
+        # Post-processor (reranker + dedup + slot allocation)
+        self.post_processor = None
+        reranker_enabled = os.environ.get("RERANKER_ENABLED", "false").lower() == "true"
+        if reranker_enabled:
+            reranker_model = os.environ.get("RERANKER_MODEL", "BAAI/bge-reranker-large")
+            reranker_device = os.environ.get("RERANKER_DEVICE", "CPU")
+            dedup_time_threshold = float(os.environ.get("RERANKER_DEDUP_TIME_THRESHOLD", "5.0"))
+            overfetch_multiplier = int(os.environ.get("RERANKER_OVERFETCH_MULTIPLIER", "3"))
+            from providers.file_ingest_and_retrieve.reranker import PostProcessor
+            self.post_processor = PostProcessor(
+                reranker_model=reranker_model,
+                device=reranker_device,
+                dedup_time_threshold=dedup_time_threshold,
+                overfetch_multiplier=overfetch_multiplier,
+            )
+            self._overfetch_multiplier = overfetch_multiplier
+            logger.info("PostProcessor (reranker) enabled.")
+        else:
+            self._overfetch_multiplier = 1
+            logger.info("PostProcessor (reranker) disabled — using simple merge.")
 
     def get_text_embedding(self, query):
         embedding_tensor = self.visual_embedding_model.handler.encode_text(query)
@@ -110,12 +128,15 @@ class ChromaRetriever:
 
         where = self._build_where_clause(filters, list_filter_mode) if filters else None
 
+        # Over-fetch when post-processor is active to compensate for dedup reduction
+        fetch_k = top_k * self._overfetch_multiplier
+
         # Search visual collection
         results = self.client.query(
             collection_name=self.visual_collection_name,
             query_embeddings=embedding,
             where=where,
-            n_results=top_k,
+            n_results=fetch_k,
         )
 
         # If text query, also search document collection and combine results
@@ -124,9 +145,17 @@ class ChromaRetriever:
                 collection_name=self.document_collection_name,
                 query_embeddings=[document_embedding],
                 where=where,
-                n_results=top_k,
+                n_results=fetch_k,
             )
-            results = self._merge_results(results, doc_results)
+            if self.post_processor:
+                results = self.post_processor.process_text_query_results(
+                    query, results, doc_results, top_k,
+                )
+            else:
+                results = self._merge_results(results, doc_results)
+        else:
+            if self.post_processor:
+                results = self.post_processor.process_image_query_results(results, top_k)
 
         return results
 
@@ -142,8 +171,11 @@ class ChromaRetriever:
             list(zip(vis_dists, vis_ids, vis_metas)) + list(zip(doc_dists, doc_ids, doc_metas)),
             key=lambda x: x[0]
         )
+        # Compute percentage scores from distance: (1 - distance) * 100, clamped to [0, 100]
+        scores = [round(max(0.0, min(100.0, (1.0 - c[0]) * 100)), 2) for c in combined]
         return {
             "ids": [[c[1] for c in combined]],
             "metadatas": [[c[2] for c in combined]],
             "distances": [[c[0] for c in combined]],
+            "scores": [scores],
         }

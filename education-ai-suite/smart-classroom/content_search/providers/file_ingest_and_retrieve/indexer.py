@@ -4,37 +4,33 @@
 import logging
 import copy
 import os
+import sys
 
 from moviepy import VideoFileClip
 from PIL import Image
-
-from providers.file_ingest_and_retrieve.embedding import get_model_handler, EmbeddingModel
-from llama_index.embeddings.huggingface_openvino import OpenVINOEmbedding
 
 from providers.chromadb_wrapper.chroma_client import ChromaClientWrapper
 from providers.file_ingest_and_retrieve.document_parser import DocumentParser
 from providers.file_ingest_and_retrieve.detector import Detector
 from providers.file_ingest_and_retrieve.utils import generate_unique_id, encode_image_to_base64
+from providers.file_ingest_and_retrieve.models import (
+    get_visual_embedding_model,
+    get_document_embedding_model,
+)
 
 logger = logging.getLogger(__name__)
 
 def create_chroma_data(embedding, meta=None):
     return {"id": generate_unique_id(), "meta": meta, "vector": embedding}
 
-
-def create_chroma_data(embedding, meta=None):
-    return {"id": generate_unique_id(), "meta": meta, "vector": embedding}
-
 class Indexer:
-    def __init__(self, collection_name="content-search"):
+    def __init__(self, collection_name="content-search", visual_embedding_model=None, document_embedding_model=None):
         self.client = ChromaClientWrapper()
         run_device = os.getenv("INGEST_DEVICE", "CPU")
         self.visual_collection_name = collection_name
-        visual_model_name = os.getenv("VISUAL_EMBEDDING_MODEL", "CLIP/clip-vit-b-16")
-        handler = get_model_handler(visual_model_name)
-        handler.load_model()
 
-        self.visual_embedding_model = EmbeddingModel(handler)
+        self.visual_embedding_model = visual_embedding_model or get_visual_embedding_model()
+
         self.detector = Detector(device=run_device)
         self.visual_id_map = {}
         self.visual_db_inited = False
@@ -46,12 +42,7 @@ class Indexer:
 
         self.document_collection_name = f"{collection_name}_documents"
 
-        doc_model_path = os.getenv("DOC_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
-
-        self.document_embedding_model = OpenVINOEmbedding(
-            model_id_or_path=doc_model_path,
-            device=run_device,
-        )
+        self.document_embedding_model = document_embedding_model or get_document_embedding_model()
 
         self.document_parser = DocumentParser(
             chunk_size=250,
@@ -170,6 +161,57 @@ class Indexer:
         logger.warning(f"File {file_path} not found in id_map.")
         return None, []
 
+    def delete_by_ids(self, ids):
+        """Delete specific entries by their IDs and update id_maps accordingly.
+
+        Args:
+            ids: List of IDs (as strings, matching ChromaDB internal format)
+        """
+        visual_ids = []
+        document_ids = []
+
+        id_set = set(str(i) for i in ids)
+
+        # Find which collection each ID belongs to and remove from id_maps
+        for file_path, file_ids in list(self.visual_id_map.items()):
+            remaining = [i for i in file_ids if i not in id_set]
+            removed = [i for i in file_ids if i in id_set]
+            visual_ids.extend(removed)
+            if remaining:
+                self.visual_id_map[file_path] = remaining
+            elif removed:
+                del self.visual_id_map[file_path]
+
+        for file_path, file_ids in list(self.document_id_map.items()):
+            remaining = [i for i in file_ids if i not in id_set]
+            removed = [i for i in file_ids if i in id_set]
+            document_ids.extend(removed)
+            if remaining:
+                self.document_id_map[file_path] = remaining
+            elif removed:
+                del self.document_id_map[file_path]
+
+        res = {}
+        if visual_ids:
+            res["visual"] = self.client.delete(collection_name=self.visual_collection_name, ids=visual_ids)
+        if document_ids:
+            res["document"] = self.client.delete(collection_name=self.document_collection_name, ids=document_ids)
+
+        removed_ids = visual_ids + document_ids
+        not_found = [i for i in ids if i not in removed_ids]
+
+        # Fallback: try deleting orphaned IDs directly from both collections
+        if not_found:
+            logger.warning(f"IDs not found in id_map, attempting direct DB delete: {not_found}")
+            for collection_name in [self.visual_collection_name, self.document_collection_name]:
+                try:
+                    self.client.delete(collection_name=collection_name, ids=not_found)
+                except Exception as e:
+                    logger.debug(f"Fallback delete from '{collection_name}' failed: {e}")
+            removed_ids.extend(not_found)
+
+        return res, removed_ids
+
     def delete_all(self):
         all_ids = []
         res_visual = res_document = None
@@ -199,14 +241,19 @@ class Indexer:
             raise RuntimeError("Document embedding model not available.")
         return self.document_embedding_model.get_text_embedding(text)
 
-    def process_video(self, video_path, meta, frame_interval=15, minimal_duration=1, do_detect_and_crop=True):
+    def process_video(self, video_path, meta, frame_extract_interval=15, do_detect_and_crop=True):
         entities = []
         video = VideoFileClip(video_path)
         frame_counter = 0
-        frame_interval = int(frame_interval)
+        frame_extract_interval = int(frame_extract_interval)
         fps = video.fps
+        total_frames = int(video.duration * fps)
+        extracted_count = 0
+        logger.debug(f"Video {video_path}: fps={fps}, total_frames={total_frames}, frame_extract_interval={frame_extract_interval}, "
+                     f"estimated extractions={total_frames // frame_extract_interval + 1}")
         for frame in video.iter_frames():
-            if frame_counter % frame_interval == 0:
+            if frame_counter % frame_extract_interval == 0:
+                extracted_count += 1
                 image = Image.fromarray(frame)
                 seconds = frame_counter / fps
                 meta_data = copy.deepcopy(meta)
@@ -226,6 +273,7 @@ class Indexer:
                 entities.append(node)
                 self._update_id_map(self.visual_id_map, meta_data["file_path"], node["id"])
             frame_counter += 1
+        logger.info(f"Processed video {video_path}: {extracted_count} frames extracted, {len(entities)} embeddings")
         return entities
 
     def process_image(self, image_path, meta, do_detect_and_crop=True):
@@ -246,6 +294,7 @@ class Indexer:
         node = create_chroma_data(embedding, meta_data)
         entities.append(node)
         self._update_id_map(self.visual_id_map, meta_data["file_path"], node["id"])
+        logger.info(f"Processed image {image_path}: {len(entities)} embeddings")
         return entities
 
     def process_document(self, document_path, meta):
@@ -304,7 +353,8 @@ class Indexer:
             self.init_document_db_client(len(embedding))
 
         node = create_chroma_data(embedding, meta_data)
-        self._update_id_map(self.document_id_map, meta_data["file_path"], node["id"])
+        file_path = meta_data.get("file_path", "__independent_text__")
+        self._update_id_map(self.document_id_map, file_path, node["id"])
         return [node]
 
     def ingest_text(self, text: str, meta: dict) -> dict:
@@ -320,12 +370,11 @@ class Indexer:
         if len(files) != len(metas):
             raise ValueError(f"Number of files and metas must be the same. files: {len(files)}, metas: {len(metas)}")
         
-        frame_interval = kwargs.get("frame_interval", 15)
-        minimal_duration = kwargs.get("minimal_duration", 1)
+        frame_extract_interval = kwargs.get("frame_extract_interval")
         do_detect_and_crop = kwargs.get("do_detect_and_crop", True)
         entities = []
         doc_extensions = ('.txt', '.pdf', '.docx', '.doc', '.pptx', '.ppt', '.xlsx',
-                          '.xls', '.html', '.htm', '.xml', '.md', '.rst')
+                          '.xls', '.html', '.htm', '.xml', '.md')
 
         for file, meta in zip(files, metas):
             if meta["file_path"] in self.visual_id_map or meta["file_path"] in self.document_id_map:
@@ -334,9 +383,11 @@ class Indexer:
             file_lower = file.lower()
             if file_lower.endswith('.mp4'):
                 meta["type"] = "video"
-                entities.extend(self.process_video(file, meta, frame_interval, minimal_duration, do_detect_and_crop))
+                logger.info(f"Processing video: {file}")
+                entities.extend(self.process_video(file, meta, frame_extract_interval, do_detect_and_crop))
             elif file_lower.endswith(('.jpg', '.png', '.jpeg')):
                 meta["type"] = "image"
+                logger.info(f"Processing image: {file}")
                 entities.extend(self.process_image(file, meta, do_detect_and_crop))
             elif file_lower.endswith(doc_extensions):
                 meta["type"] = "document"
