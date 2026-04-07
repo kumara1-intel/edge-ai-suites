@@ -1,8 +1,7 @@
-# Copyright (C) 2025 Intel Corporation
+# Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 #
-# Kata Containers overlay - included automatically when deploying with --secure-setup flag.
-# Adds Kata VM runtime, DNS relay, and resolv.conf mounts for dlstreamer and vlm services.
+# Trusted Compute overlay - included automatically when deploying with env ENABLE_TRUSTED_COMPUTE=true
 
 services:
   dlstreamer-pipeline-server:
@@ -10,7 +9,7 @@ services:
     privileged: false
     volumes:
       - dlstreamer-pipeline-server-pipeline-root:/var/cache/pipeline_root
-      - ./kata-resolv.conf:/etc/resolv.conf:ro
+      - ./tc-resolv.conf:/etc/resolv.conf:ro
     deploy:
       resources:
         limits:
@@ -25,7 +24,7 @@ services:
     healthcheck:
       start_period: 300s
     volumes:
-      - ./kata-resolv.conf:/etc/resolv.conf:ro
+      - ./tc-resolv.conf:/etc/resolv.conf:ro
     deploy:
       resources:
         limits:

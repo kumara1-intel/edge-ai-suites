@@ -37,15 +37,15 @@ export AGENT_UI_PORT=$(grep -oP '"agent_ui_port"\s*:\s*"\K[^"]+' "$DEPLOYMENT_CO
 [ "$AGENT_BACKEND_PORT" = "" ] && unset AGENT_BACKEND_PORT
 [ "$AGENT_UI_PORT" = "" ] && unset AGENT_UI_PORT
 
-# Set Kata overlay if ENABLE_TRUSTED_COMPUTE env variable is set
-KATA_OVERLAY=""
-if [ "$ENABLE_TRUSTED_COMPUTE" = "true" ]; then
-    KATA_OVERLAY="-f ${APP_DIR}/docker/kata-overlay.yaml"
+# Set TC overlay if ENABLE_TC env variable is set
+TC_OVERLAY=""
+if [ "$ENABLE_TC" = "true" ]; then
+    TC_OVERLAY="-f ${APP_DIR}/docker/tc-overlay.yaml"
     echo -e "${BLUE}==> Trusted Compute security enabled ${NC}"
 fi
 
 # Validate GPU and Trusted Compute compatibility
-if [ "$ENABLE_TRUSTED_COMPUTE" = "true" ] && [ "$VLM_DEVICE" = "GPU" ]; then
+if [ "$ENABLE_TC" = "true" ] && [ "$VLM_DEVICE" = "GPU" ]; then
     echo -e "${RED}ERROR: GPU accelerator is not supported for Trusted Compute${NC}"
     echo -e "${YELLOW}Please use VLM_DEVICE=CPU or disable Trusted Compute${NC}"
     return 1
@@ -102,9 +102,9 @@ elif [ "$1" = "--stop" ] || [ "$1" = "--clean" ]; then
     
     # check if ri-compose.yaml exists and run docker compose down accordingly
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
+        docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
     else
-        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
+        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
     fi
 
     if [ $? -ne 0 ]; then
@@ -131,6 +131,10 @@ elif [ "$1" = "--stop" ] || [ "$1" = "--clean" ]; then
         if [ -d "$RI_DIR" ]; then
             rm -rf "$RI_DIR/src/secrets/browser.auth" "$RI_DIR/chart/files/secrets" 2>/dev/null || true
         fi
+	# Remove tc-resolv.conf symlink if it exists
+	if [ -L "${DEPS_DIR}/docker/tc-resolv.conf" ]; then
+	    rm "${DEPS_DIR}/docker/tc-resolv.conf" 2>/dev/null || true
+	fi
         echo -e "${GREEN}Cleanup completed successfully. ${NC}"
     fi
 
@@ -191,9 +195,11 @@ check_and_setup_dependencies() {
     rm "$APP_DIR/docker/ri-compose.yaml" 2> /dev/null 
     ln -sf "$DEPS_DIR/compose-scenescape.yml" "$APP_DIR/docker/ri-compose.yaml"
 
-    # Create symbolic link to kata-resolv.conf in docker dir of agent application
-    rm "$APP_DIR/docker/kata-resolv.conf" 2> /dev/null
-    ln -sf "$DEPS_DIR/kata-resolv.conf" "$APP_DIR/docker/kata-resolv.conf"
+    # Create symbolic link from DEPS_DIR to tc-resolv.conf when Trusted Compute is enabled
+    if [ "$ENABLE_TC" = "true" ]; then
+	rm -rf "$DEPS_DIR/tc-resolv.conf" 2> /dev/null
+	ln -sf "$APP_DIR/tc-resolv.conf" "$DEPS_DIR/docker/tc-resolv.conf"
+    fi
 
     return 0
 }
@@ -313,7 +319,7 @@ build_service() {
 
     # Build the service images
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME build
+        docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME build
     else
         docker compose -f "${APP_DIR}/docker/agent-compose.yaml" -p $PROJECT_NAME build
     fi
@@ -331,7 +337,7 @@ build_and_start_service() {
     echo -e "${BLUE}==> Starting Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${BLUE}...${NC}"
 
     # Build and start the services
-    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d --build
+    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d --build
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Smart-Traffic-Intersection-Agent Services built and started successfully!${NC}"
@@ -347,7 +353,7 @@ start_service() {
     echo -e "${BLUE}==> Starting Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${BLUE}...${NC}"
     
     # Start the services
-    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d
+    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Smart-Traffic-Intersection-Agent Services started successfully!${NC}"
@@ -374,7 +380,7 @@ restart_service() {
                 return 1
             fi
             
-            docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d --force-recreate
+            docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d --force-recreate
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}Traffic Intersection Agent Backend/UI restarted successfully!${NC}"
@@ -405,7 +411,7 @@ restart_service() {
             
             # Start with force-recreate to ensure env vars are picked up
             echo -e "${BLUE}==> Restarting dependencies (Smart Intersection RI) ...${NC}"
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d --force-recreate
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d --force-recreate
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}Dependencies restarted successfully!${NC}"
@@ -426,14 +432,14 @@ restart_service() {
             fi
             
             # Stop all services
-            docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME down
+            docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME down
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to stop services for Traffic Intersection Agent!${NC}"
                 return 1
             fi
 
             # Restart all services
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $KATA_OVERLAY -p $PROJECT_NAME up -d --force-recreate  
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d --force-recreate  
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}All dependencies and Backend/UI services for Traffic Intersection Agent restarted successfully!${NC}"
