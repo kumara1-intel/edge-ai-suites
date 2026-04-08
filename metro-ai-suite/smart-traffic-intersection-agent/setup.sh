@@ -40,6 +40,13 @@ export AGENT_UI_PORT=$(grep -oP '"agent_ui_port"\s*:\s*"\K[^"]+' "$DEPLOYMENT_CO
 # Set TC overlay if ENABLE_TC env variable is set
 TC_OVERLAY=""
 if [ "$ENABLE_TC" = "true" ]; then
+    if [ -f "${APP_DIR}/check_tc_deployment.sh" ]; then
+        if ! bash "${APP_DIR}/check_tc_deployment.sh" 2>/dev/null; then
+            echo -e "${RED}ERROR: Trusted Compute deployment verification failed${NC}"
+            echo -e "${YELLOW}Please ensure Kata Containers is properly installed and configured${NC}"
+            return 1
+        fi
+    fi
     TC_OVERLAY="-f ${APP_DIR}/docker/tc-overlay.yaml"
     echo -e "${BLUE}==> Trusted Compute security enabled ${NC}"
 fi
@@ -100,11 +107,14 @@ elif [ "$1" = "--restart" ] && [ "$#" -eq 2 ] && [ "$2" != "agent" ] && [ "$2" !
 elif [ "$1" = "--stop" ] || [ "$1" = "--clean" ]; then
     echo -e "${YELLOW}Stopping Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${YELLOW}... ${NC}"
     
+    # Always include tc-overlay during cleanup to remove TC-specific containers (e.g., tc-dns-relay)
+    CLEAN_TC_OVERLAY="-f ${APP_DIR}/docker/tc-overlay.yaml"
+
     # check if ri-compose.yaml exists and run docker compose down accordingly
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
+        docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $CLEAN_TC_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
     else
-        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
+        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $CLEAN_TC_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
     fi
 
     if [ $? -ne 0 ]; then
@@ -131,10 +141,6 @@ elif [ "$1" = "--stop" ] || [ "$1" = "--clean" ]; then
         if [ -d "$RI_DIR" ]; then
             rm -rf "$RI_DIR/src/secrets/browser.auth" "$RI_DIR/chart/files/secrets" 2>/dev/null || true
         fi
-	# Remove tc-resolv.conf symlink if it exists
-	if [ -L "${DEPS_DIR}/docker/tc-resolv.conf" ]; then
-	    rm "${DEPS_DIR}/docker/tc-resolv.conf" 2>/dev/null || true
-	fi
         echo -e "${GREEN}Cleanup completed successfully. ${NC}"
     fi
 
@@ -198,9 +204,8 @@ check_and_setup_dependencies() {
     # Create symbolic link from DEPS_DIR to tc-resolv.conf when Trusted Compute is enabled
     if [ "$ENABLE_TC" = "true" ]; then
 	rm -rf "$DEPS_DIR/tc-resolv.conf" 2> /dev/null
-	ln -sf "$APP_DIR/tc-resolv.conf" "$DEPS_DIR/docker/tc-resolv.conf"
+	ln -sf "$APP_DIR/docker/tc-resolv.conf" "$DEPS_DIR/tc-resolv.conf"
     fi
-
     return 0
 }
 

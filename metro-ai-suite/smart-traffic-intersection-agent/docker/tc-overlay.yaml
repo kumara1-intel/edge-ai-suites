@@ -1,7 +1,7 @@
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 #
-# Trusted Compute overlay - included automatically when deploying with env ENABLE_TRUSTED_COMPUTE=true
+# Trusted Compute overlay - included automatically when deploying with env ENABLE_TC=true
 
 services:
   dlstreamer-pipeline-server:
@@ -34,7 +34,7 @@ services:
           cpus: '4'
           memory: 8G
 
-  kata-dns-relay:
+  tc-dns-relay:
     image: coredns/coredns:1.14.2
     networks:
       scenescape:
