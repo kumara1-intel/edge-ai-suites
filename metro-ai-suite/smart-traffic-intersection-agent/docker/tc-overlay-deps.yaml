@@ -1,7 +1,8 @@
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 #
-# Trusted Compute overlay - included automatically when deploying with env ENABLE_TC=true
+# Trusted Compute overlay for dependency services (Smart Intersection RI)
+# Included automatically when deploying with env ENABLE_TC=true
 
 services:
   dlstreamer-pipeline-server:
@@ -18,21 +19,6 @@ services:
         reservations:
           cpus: '2'
           memory: 2G
-
-  vlm-openvino-serving:
-    runtime: io.containerd.kata.v2
-    healthcheck:
-      start_period: 300s
-    volumes:
-      - ./tc-resolv.conf:/etc/resolv.conf:ro
-    deploy:
-      resources:
-        limits:
-          cpus: '6'
-          memory: 10G
-        reservations:
-          cpus: '4'
-          memory: 8G
 
   tc-dns-relay:
     image: coredns/coredns:1.14.2

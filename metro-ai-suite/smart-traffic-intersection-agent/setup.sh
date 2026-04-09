@@ -38,7 +38,6 @@ export AGENT_UI_PORT=$(grep -oP '"agent_ui_port"\s*:\s*"\K[^"]+' "$DEPLOYMENT_CO
 [ "$AGENT_UI_PORT" = "" ] && unset AGENT_UI_PORT
 
 # Set TC overlay if ENABLE_TC env variable is set
-TC_OVERLAY=""
 if [ "$ENABLE_TC" = "true" ]; then
     if [ -f "${APP_DIR}/check_tc_deployment.sh" ]; then
         if ! bash "${APP_DIR}/check_tc_deployment.sh" 2>/dev/null; then
@@ -47,8 +46,14 @@ if [ "$ENABLE_TC" = "true" ]; then
             return 1
         fi
     fi
-    TC_OVERLAY="-f ${APP_DIR}/docker/tc-overlay.yaml"
+    TC_OVERLAY_AGENT="-f ${APP_DIR}/docker/tc-overlay-agent.yaml"
+    TC_OVERLAY_DEPS="-f ${APP_DIR}/docker/tc-overlay-deps.yaml"
+    TC_OVERLAY_ALL="${TC_OVERLAY_AGENT} ${TC_OVERLAY_DEPS}"
     echo -e "${BLUE}==> Trusted Compute security enabled ${NC}"
+else
+    TC_OVERLAY_AGENT=""
+    TC_OVERLAY_DEPS=""
+    TC_OVERLAY_ALL=""
 fi
 
 # Validate GPU and Trusted Compute compatibility
@@ -108,7 +113,7 @@ elif [ "$1" = "--stop" ] || [ "$1" = "--clean" ]; then
     echo -e "${YELLOW}Stopping Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${YELLOW}... ${NC}"
     
     # Always include tc-overlay during cleanup to remove TC-specific containers (e.g., tc-dns-relay)
-    CLEAN_TC_OVERLAY="-f ${APP_DIR}/docker/tc-overlay.yaml"
+    CLEAN_TC_OVERLAY="-f ${APP_DIR}/docker/tc-overlay-agent.yaml -f ${APP_DIR}/docker/tc-overlay-deps.yaml"
 
     # check if ri-compose.yaml exists and run docker compose down accordingly
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
@@ -324,7 +329,7 @@ build_service() {
 
     # Build the service images
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME build
+        docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_ALL -p $PROJECT_NAME build
     else
         docker compose -f "${APP_DIR}/docker/agent-compose.yaml" -p $PROJECT_NAME build
     fi
@@ -342,7 +347,7 @@ build_and_start_service() {
     echo -e "${BLUE}==> Starting Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${BLUE}...${NC}"
 
     # Build and start the services
-    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d --build
+    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_ALL -p $PROJECT_NAME up -d --build
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Smart-Traffic-Intersection-Agent Services built and started successfully!${NC}"
@@ -358,7 +363,7 @@ start_service() {
     echo -e "${BLUE}==> Starting Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${BLUE}...${NC}"
     
     # Start the services
-    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d
+    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_ALL -p $PROJECT_NAME up -d
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Smart-Traffic-Intersection-Agent Services started successfully!${NC}"
@@ -385,7 +390,7 @@ restart_service() {
                 return 1
             fi
             
-            docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d --force-recreate
+            docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME up -d --force-recreate
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}Traffic Intersection Agent Backend/UI restarted successfully!${NC}"
@@ -416,7 +421,7 @@ restart_service() {
             
             # Start with force-recreate to ensure env vars are picked up
             echo -e "${BLUE}==> Restarting dependencies (Smart Intersection RI) ...${NC}"
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d --force-recreate
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" $TC_OVERLAY_DEPS -p $PROJECT_NAME up -d --force-recreate
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}Dependencies restarted successfully!${NC}"
@@ -437,14 +442,14 @@ restart_service() {
             fi
             
             # Stop all services
-            docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME down
+            docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_ALL -p $PROJECT_NAME down
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to stop services for Traffic Intersection Agent!${NC}"
                 return 1
             fi
 
             # Restart all services
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY -p $PROJECT_NAME up -d --force-recreate  
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_ALL -p $PROJECT_NAME up -d --force-recreate
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}All dependencies and Backend/UI services for Traffic Intersection Agent restarted successfully!${NC}"
