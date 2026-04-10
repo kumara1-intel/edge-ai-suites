@@ -256,6 +256,67 @@ URLs for accessing the relevant services:
 
 ![Service endpoints displayed after setup completion](./_assets/service_endpoints.png "Service endpoints after completed setup")
 
+## Deploy with Trusted Compute
+
+Intel Trusted Compute uses [Kata Containers](https://katacontainers.io/) to run workloads
+inside a hardware-isolated virtual machine, providing an additional layer of security for
+sensitive AI workloads.
+
+> **Note:** GPU acceleration is currently not supported when deploying with Trusted Compute.
+> VLM inference will run on CPU.
+
+
+### 1. Install the Trusted Workload
+
+Fetch the latest version of the Trusted Compute relase using the below command:
+
+```bash
+export VERSION=$(curl -s "https://api.github.com/repos/open-edge-platform/trusted-compute/tags" \
+  | grep -o 'trusted-workload/kata-deploy/[0-9.]*' | head -1 | cut -d'/' -f3)
+```
+
+Download the deployment manifest:
+
+```bash
+curl -LO https://github.com/open-edge-platform/trusted-compute/raw/main/trusted-workload/kata-deploy/tw-docker-deploy.yaml
+```
+
+Install the Trusted Compute on the host:
+
+```bash
+VERSION=$VERSION docker compose -f tw-docker-deploy.yaml up -d
+```
+
+This deploys the `tc-docker-deploy` container, which installs the Trusted Compute on the host.
+
+### 2. Deploy the Smart Traffic Intersection Agent with Trusted Compute
+
+```bash
+export ENABLE_TC=true
+source ./setup.sh --setup
+```
+
+The Smart Traffic Intersection Agent and the Vision Language Model (VLM) containers will run
+inside hardware-isolated Kata VMs, protecting inference workloads and traffic data from
+untrusted co-tenants on the same host.
+
+> **Note:** All other setup and configuration steps remain the same as described in the
+> [Quick Start with Setup Script](#quick-start-with-setup-script) section above.
+
+### 3. Clean Up the Deployment
+
+To stop and remove the Smart Traffic Intersection Agent containers:
+
+```bash
+source ./setup.sh --clean
+```
+
+To also uninstall the Trusted Compute from the host:
+
+```bash
+VERSION=$VERSION docker compose -f tw-docker-deploy.yaml down
+```
+
 ## Troubleshooting
 
 ### Port Conflicts for Traffic Intersection Agent Backend or UI
