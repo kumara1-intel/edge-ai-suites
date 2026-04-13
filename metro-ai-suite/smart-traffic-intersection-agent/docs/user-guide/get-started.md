@@ -266,28 +266,9 @@ sensitive AI workloads.
 > VLM inference will run on CPU.
 
 
-### 1. Install the Trusted Workload
+### 1. Install Trusted Compute
 
-Fetch the latest version of the Trusted Compute relase using the below command:
-
-```bash
-export VERSION=$(curl -s "https://api.github.com/repos/open-edge-platform/trusted-compute/tags" \
-  | grep -o 'trusted-workload/kata-deploy/[0-9.]*' | head -1 | cut -d'/' -f3)
-```
-
-Download the deployment manifest:
-
-```bash
-curl -LO https://github.com/open-edge-platform/trusted-compute/raw/main/trusted-workload/kata-deploy/tw-docker-deploy.yaml
-```
-
-Install the Trusted Compute on the host:
-
-```bash
-VERSION=$VERSION docker compose -f tw-docker-deploy.yaml up -d
-```
-
-This deploys the `tc-docker-deploy` container, which installs the Trusted Compute on the host.
+Follow the [Trusted Compute installation guide](https://github.com/open-edge-platform/trusted-compute/blob/main/docs/tc_docker_deployment.md) to install Kata Containers runtime on your host system.
 
 ### 2. Deploy the Smart Traffic Intersection Agent with Trusted Compute
 
@@ -296,8 +277,8 @@ export ENABLE_TC=true
 source ./setup.sh --setup
 ```
 
-The Smart Traffic Intersection Agent and the Vision Language Model (VLM) containers will run
-inside hardware-isolated Kata VMs, protecting inference workloads and traffic data from
+The DL Streamer Pipeline Server and Vision Language Model (VLM) containers will run
+inside hardware-isolated Kata VMs, protecting inference workloads and video data from
 untrusted co-tenants on the same host.
 
 > **Note:** All other setup and configuration steps remain the same as described in the
@@ -311,11 +292,7 @@ To stop and remove the Smart Traffic Intersection Agent containers:
 source ./setup.sh --clean
 ```
 
-To also uninstall the Trusted Compute from the host:
-
-```bash
-VERSION=$VERSION docker compose -f tw-docker-deploy.yaml down
-```
+To uninstall Trusted Compute from the host, refer to the [Trusted Compute documentation](https://github.com/open-edge-platform/trusted-compute/blob/main/docs/tc_docker_deployment.md#uninstall).
 
 ## Troubleshooting
 

@@ -16,7 +16,7 @@ docker rm -f tc-nginx &>/dev/null 2>&1 || true
 docker run -d --name tc-nginx --runtime io.containerd.kata.v2 nginx:1.27.0 &>/dev/null || tc_error
 
 sleep 3
-sandbox_id=$(docker inspect tc-nginx --format='{{.Id}}' 2>/dev/null | cut -c1-12)
-ps aux | grep -i qemu | grep -v grep | grep -q "$sandbox_id" || tc_error
+# Verify containerd-shim-kata-v2 is running for this container
+sandbox_id=$(docker inspect tc-nginx --format='{{.Id}}' 2>/dev/null)
+ps aux | grep "containerd-shim-kata-v2" | grep -v grep | grep -q "$sandbox_id" || tc_error
 cleanup
-
