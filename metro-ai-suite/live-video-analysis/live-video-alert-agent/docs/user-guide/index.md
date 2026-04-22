@@ -36,12 +36,10 @@ generate real-time alerts from natural language prompts, and monitor them on a u
 :::{toctree}
 :hidden:
 
-get-started
-system-requirements
-how-to-build-source
-how-it-works
-api-reference
-known-issues
+get-started.md
+how-it-works.md
+api-reference.md
+known-issues.md
 Release Notes <release-notes.md>
 
 :::

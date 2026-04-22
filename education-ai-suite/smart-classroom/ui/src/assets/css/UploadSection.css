@@ -132,6 +132,7 @@
 }
 
 /* Row states */
+.cs-row-staged        { background: #f8f9fa; }
 .cs-row-processing    { background: #ffffff; }
 .cs-row-completed     { background: #ffffff; }
 .cs-row-failed        { background: #fff5f5; }
@@ -177,6 +178,11 @@
   box-sizing: border-box;
 }
 
+.cs-status-badge--staged {
+  background: #f0f4f8;
+  color: #607d8b;
+}
+
 .cs-status-badge--pending,
 .cs-status-badge--processing {
   background: #e3f2fd;
@@ -198,7 +204,41 @@
   color: #ffffff;
 }
 
+/* ─── Summarizing Label ──────────────────────────────────── */
+
+.cs-summarizing-label {
+  display: block;
+  font-size: 10px;
+  color: #0071c5;
+  font-style: italic;
+  font-weight: 500;
+  margin-top: 3px;
+  animation: cs-summarizing-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes cs-summarizing-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.45; }
+}
+
 /* ─── Progress Bar ───────────────────────────────────────── */
+
+/* ─── Progress Track & Bar ───────────────────────────────── */
+
+.cs-progress-track {
+  width: 100%;
+  height: 4px;
+  background: #e0e0e0;
+  border-radius: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.cs-progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
 
 .cs-progress-bar--animated {
   background: #0071c5;
@@ -209,6 +249,10 @@
 
 .cs-progress-bar--complete {
   background: #37803a;
+}
+
+.cs-progress-bar--staged {
+  background: #b0bec5;
 }
 
 @keyframes cs-progress-pulse {
@@ -248,6 +292,26 @@
 
 .cs-retry-btn:hover {
   background: #fdecea;
+}
+
+.cs-failed-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.cs-retry-btn--remove {
+  border-color: #b0bec5;
+  color: #546e7a;
+}
+
+.cs-retry-btn--remove:hover {
+  background: #eceff1;
+}
+
+.cs-remove-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 .cs-remove-btn {
@@ -549,8 +613,10 @@
 
 .cs-table-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
   margin-top: 8px;
+  gap: 8px;
 }
 
 .cs-clear-all-btn {
@@ -567,6 +633,34 @@
 .cs-clear-all-btn:hover {
   background: #d32f2f;
   color: #fff;
+}
+
+.cs-clear-all-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: #b0bec5;
+  color: #b0bec5;
+}
+
+.cs-upload-all-btn {
+  background: #0071c5;
+  border: none;
+  color: #fff;
+  border-radius: 4px;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.cs-upload-all-btn:hover:not(:disabled) {
+  background: #005fa3;
+}
+
+.cs-upload-all-btn:disabled {
+  background: #b0c4d8;
+  cursor: not-allowed;
 }
 
 /* ─── Media Queries ──────────────────────────────────────── */

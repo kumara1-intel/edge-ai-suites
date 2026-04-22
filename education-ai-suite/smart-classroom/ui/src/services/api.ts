@@ -665,15 +665,6 @@ export async function* monitorVideoAnalyticsPipelines(
     for (const line of lines) {
       if (!line.trim()) continue;
       const parsed = JSON.parse(line);
-
-    if (parsed.results) {
-      parsed.results = parsed.results.map((r: any) => ({
-        ...r,
-        hls_stream: r.hls_stream
-          ? `${r.hls_stream}/index.m3u8`
-          : null
-      }));
-    }
     yield parsed;
         }
       }
@@ -784,9 +775,9 @@ export async function csUploadIngest(
       throw new Error(json.message || `Upload-ingest failed (${res.status})`);
     }
     const data = await res.json();
-    // code 40901 = file already exists; backend returns 200 OK with no task_id
+    // code 40901 = file already exists; backend returns task_id for cleanup
     if (data.code === 40901) {
-      return { task_id: '', status: 'ALREADY_EXISTS', file_key: data.data?.file_key };
+      return { task_id: data.data?.task_id ?? '', status: 'ALREADY_EXISTS', file_key: data.data?.file_key };
     }
     const payload = data.data ?? data;
     if (!payload?.task_id) {
@@ -832,6 +823,24 @@ export async function csQueryTask(taskId: string): Promise<{
     }
     const data = await res.json();
     return data.data ?? data;
+  });
+}
+
+export async function csCleanupTask(
+  taskId: string
+): Promise<{ code: number; task_id: string; status: string; message: string }> {
+  return safeApiCall(async () => {
+    const res = await fetch(
+      `${CONTENT_SEARCH_API_URL}/api/v1/object/cleanup-task/${encodeURIComponent(taskId)}`,
+      { method: 'DELETE' }
+    );
+    const data = await res.json().catch(() => ({}));
+    return {
+      code: data.code ?? 20000,
+      task_id: data.data?.task_id ?? taskId,
+      status: data.data?.status ?? 'COMPLETED',
+      message: data.message ?? '',
+    };
   });
 }
 
@@ -1041,7 +1050,8 @@ export async function csSearch(params: CsSearchParams): Promise<CsSearchResult[]
     }
 
     const data = await response.json();
-    return Array.isArray(data) ? data : [];
+    // API returns { code, data: { results: [...] }, message, timestamp }
+    return Array.isArray(data?.data?.results) ? data.data.results : [];
   } catch (error) {
     console.error('csSearch error:', error);
     return [];

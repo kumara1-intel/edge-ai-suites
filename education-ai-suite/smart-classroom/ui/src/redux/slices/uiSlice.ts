@@ -49,6 +49,7 @@ export interface UIState {
   videoAnalyticsStopping: boolean;
   hasUploadedVideoFiles: boolean;
   monitoringActive: boolean;
+  monitoringPaused: boolean;
   videoPlaybackMode: boolean;
   uploadedVideoFiles: {
     front: File | null;
@@ -70,9 +71,11 @@ export interface UIState {
     topic: string;
   } | null;
   csProcessing: boolean;
+  csSummarizing: boolean;
   transcriptionDone: boolean;
   csUploadsComplete: boolean;
   csHasUploads: boolean;
+  csTags: string[];
 }
  
 const initialState: UIState = {
@@ -111,6 +114,7 @@ const initialState: UIState = {
   videoAnalyticsStopping: false,
   hasUploadedVideoFiles: false,
   monitoringActive: false,
+  monitoringPaused: false,
   videoPlaybackMode: false,
   uploadedVideoFiles: {
     front: null,
@@ -128,8 +132,10 @@ const initialState: UIState = {
   contentSegmentationError: null,
   timelineHighlight: null,
   csProcessing: false,
+  csSummarizing: false,
   csUploadsComplete: false,
   csHasUploads: false,
+  csTags: [],
 };
 
 const uiSlice = createSlice({
@@ -410,6 +416,10 @@ const uiSlice = createSlice({
     setMonitoringActive: (state, action) => {
       state.monitoringActive = action.payload;
     },
+
+    setMonitoringPaused: (state, action: PayloadAction<boolean>) => {
+      state.monitoringPaused = action.payload;
+    },
     
     setUploadedVideoFiles(state, action: PayloadAction<{
       front?: File | null;
@@ -502,12 +512,20 @@ const uiSlice = createSlice({
       state.csProcessing = action.payload;
     },
 
+    setCsSummarizing(state, action: PayloadAction<boolean>) {
+      state.csSummarizing = action.payload;
+    },
+
     setCsUploadsComplete(state, action: PayloadAction<boolean>) {
       state.csUploadsComplete = action.payload;
     },
 
     setCsHasUploads(state, action: PayloadAction<boolean>) {
       state.csHasUploads = action.payload;
+    },
+
+    setCsTags(state, action: PayloadAction<string[]>) {
+      state.csTags = action.payload;
     },
 
     clearSearchResults(state) {
@@ -579,6 +597,7 @@ export const {
   startTranscription,
   setHasUploadedVideoFiles,
   setMonitoringActive,
+  setMonitoringPaused,
   setUploadedVideoFiles,
   setVideoPlaybackMode,
   setRecordedVideoType,
@@ -596,8 +615,10 @@ export const {
   setShowSearchResults,
   setTimelineHighlight,
   setCsProcessing,
+  setCsSummarizing,
   setCsUploadsComplete,
   setCsHasUploads,
+  setCsTags,
 } = uiSlice.actions;
  
 export default uiSlice.reducer;
