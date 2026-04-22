@@ -275,7 +275,10 @@ sensitive AI workloads.
 
 ### 1. Install Trusted Compute
 
-Follow the [Trusted Compute installation guide](https://github.com/open-edge-platform/trusted-compute/blob/main/docs/tc_docker_deployment.md) to install Kata Containers runtime on your host system.
+Follow the [Trusted Compute baremetal installation guide](https://github.com/open-edge-platform/trusted-compute/blob/main/docs/trusted_compute_baremetal.md) to install Kata Containers runtime on your host system. Complete the following sections:
+1. Prerequisites
+2. Download the Trusted Compute Package
+3. Docker Option
 
 ### 2. Deploy the Smart Traffic Intersection Agent with Trusted Compute
 
@@ -299,7 +302,7 @@ To stop and remove the Smart Traffic Intersection Agent containers:
 source ./setup.sh --clean
 ```
 
-To uninstall Trusted Compute from the host, refer to the [Trusted Compute documentation](https://github.com/open-edge-platform/trusted-compute/blob/main/docs/tc_docker_deployment.md#uninstall).
+To uninstall Trusted Compute from the host, refer to the [Trusted Compute documentation](https://github.com/open-edge-platform/trusted-compute/blob/main/docs/trusted_compute_baremetal.md).
 
 ## Upgrading
 
