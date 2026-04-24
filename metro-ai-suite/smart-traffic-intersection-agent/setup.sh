@@ -119,18 +119,15 @@ elif [ "$1" = "--restart" ] && [ "$#" -eq 2 ] && [ "$2" != "agent" ] && [ "$2" !
 elif [ "$1" = "--stop" ] || [ "$1" = "--clean" ]; then
     echo -e "${YELLOW}Stopping Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${YELLOW}... ${NC}"
     
-<<<<<<< HEAD
-    # Use project name only for teardown to avoid needing env vars to parse compose files
-    # This works for both TC and non-TC deployments since project name is the same
-    docker compose -p ${PROJECT_NAME} down 2> /dev/null
-=======
+    # Always include tc-overlay during cleanup to remove TC-specific containers (e.g., tc-dns-relay)
+    CLEAN_TC_OVERLAY="-f ${APP_DIR}/docker/tc-overlay-agent.yaml -f ${APP_DIR}/docker/tc-overlay-deps.yaml"
+    
     # check if ri-compose.yaml exists and run docker compose down accordingly
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose --project-directory "$DEPS_DIR" -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" -p ${PROJECT_NAME} down
+        docker compose --project-directory "$DEPS_DIR" -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $CLEAN_TC_OVERLAY -p ${PROJECT_NAME} down
     else
-        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" -p ${PROJECT_NAME} down 2> /dev/null
+        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $CLEAN_TC_OVERLAY -p ${PROJECT_NAME} down 2> /dev/null
     fi
->>>>>>> main
 
     if [ $? -ne 0 ]; then
         echo -e "${RED}Failed to stop Smart-Traffic-Intersection-Agent services. ${NC}"
@@ -673,8 +670,8 @@ restart_service() {
                 return 1
             fi
             
-            # Stop all services
-            docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_ALL -p $PROJECT_NAME down
+            # Stop all services (use CLEAN_TC_OVERLAY to ensure TC containers are removed)
+            docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $CLEAN_TC_OVERLAY -p $PROJECT_NAME down
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to stop services for Traffic Intersection Agent!${NC}"
                 return 1
