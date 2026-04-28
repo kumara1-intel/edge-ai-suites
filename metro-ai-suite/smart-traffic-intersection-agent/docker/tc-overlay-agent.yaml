@@ -8,17 +8,19 @@ services:
   ovms-service:
     runtime: io.containerd.kata.v2
     healthcheck:
-      start_period: 300s
+      timeout: 60s
+      interval: 60s
+      start_period: 600s
     volumes:
       - ./tc-resolv.conf:/etc/resolv.conf:ro
     deploy:
       resources:
         limits:
-          cpus: '4'
-          memory: 4G
+          cpus: '16'
+          memory: 16G
         reservations:
-          cpus: '2'
-          memory: 2G
+          cpus: '12'
+          memory: 12G
 
 networks:
   scenescape:

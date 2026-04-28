@@ -219,8 +219,8 @@ check_and_setup_dependencies() {
 
     # Create symbolic link from DEPS_DIR to tc-resolv.conf when Trusted Compute is enabled
     if [ "$ENABLE_TC" = "true" ]; then
-	rm -rf "$DEPS_DIR/tc-resolv.conf" 2> /dev/null
-	ln -sf "$APP_DIR/docker/tc-resolv.conf" "$DEPS_DIR/tc-resolv.conf"
+        rm -rf "$DEPS_DIR/tc-resolv.conf" 2> /dev/null
+        ln -sf "$APP_DIR/docker/tc-resolv.conf" "$DEPS_DIR/tc-resolv.conf"
     fi
     return 0
 }
@@ -670,7 +670,7 @@ restart_service() {
                 return 1
             fi
             
-            # Stop all services (use CLEAN_TC_OVERLAY to ensure TC containers are removed)
+            # Stop all services
             docker compose -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $CLEAN_TC_OVERLAY -p $PROJECT_NAME down
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to stop services for Traffic Intersection Agent!${NC}"
@@ -678,7 +678,7 @@ restart_service() {
             fi
 
             # Restart all services
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_ALL -p $PROJECT_NAME up -d --force-recreate
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_ALL -p $PROJECT_NAME up -d --force-recreate 
             
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}All dependencies and Backend/UI services for Traffic Intersection Agent restarted successfully!${NC}"
