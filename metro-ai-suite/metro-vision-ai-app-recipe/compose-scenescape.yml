@@ -202,6 +202,7 @@ services:
       - ./${SAMPLE_APP}/src/dlstreamer-pipeline-server/models/intersection:/home/pipeline-server/models/object_detection/intersection
       - dlstreamer-pipeline-server-pipeline-root:/var/cache/pipeline_root:uid=1999,gid=1999
       - dlstreamer-pipeline-server-tmp:/tmp
+      - "/dev:/dev"
     secrets:
       - source: root-cert
         target: certs/scenescape-ca.pem

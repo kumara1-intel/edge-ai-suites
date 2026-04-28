@@ -5,7 +5,7 @@
 # Included automatically when deploying with env ENABLE_TC=true
 
 services:
-  vlm-openvino-serving:
+  ovms-service:
     runtime: io.containerd.kata.v2
     healthcheck:
       start_period: 300s
@@ -14,11 +14,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '6'
-          memory: 10G
-        reservations:
           cpus: '4'
-          memory: 8G
+          memory: 4G
+        reservations:
+          cpus: '2'
+          memory: 2G
 
 networks:
   scenescape:

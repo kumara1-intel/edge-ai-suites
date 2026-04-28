@@ -270,7 +270,6 @@ inside a hardware-isolated virtual machine, providing an additional layer of sec
 sensitive AI workloads.
 
 > **Note:** GPU acceleration is currently not supported when deploying with Trusted Compute.
-> VLM inference will run on CPU.
 
 
 ### 1. Install Trusted Compute
@@ -287,8 +286,8 @@ export ENABLE_TC=true
 source ./setup.sh --setup
 ```
 
-The DL Streamer Pipeline Server and Vision Language Model (VLM) containers will run
-inside hardware-isolated Kata VMs, protecting inference workloads and video data from
+The DL Streamer Pipeline Server and openvino model server (OVMS) containers will run
+inside hardware-isolated TC VMs, protecting inference workloads and video data from
 untrusted co-tenants on the same host.
 
 > **Note:** All other setup and configuration steps remain the same as described in the
