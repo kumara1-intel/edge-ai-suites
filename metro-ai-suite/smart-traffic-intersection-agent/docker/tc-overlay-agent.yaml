@@ -21,6 +21,11 @@ services:
         reservations:
           cpus: '12'
 
+  traffic-agent:
+    runtime: io.containerd.kata.v2
+    volumes:
+      - ./tc-resolv.conf:/etc/resolv.conf:ro
+
 networks:
   scenescape:
     ipam:

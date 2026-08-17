@@ -32,6 +32,9 @@ spec:
         {{- include "stia.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: traffic-agent
     spec:
+      {{- if .Values.ovms.trustedCompute.enabled }}
+      runtimeClassName: kata-qemu
+      {{- end }}
       containers:
         - name: traffic-agent
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
