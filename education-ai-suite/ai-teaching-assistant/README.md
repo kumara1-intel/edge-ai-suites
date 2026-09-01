@@ -31,10 +31,13 @@ The application runs locally on Intel hardware using OpenVINO-backed services.
 
 See [docs/user-guide/get-started.md](docs/user-guide/get-started.md) for the complete flow.
 
+> **Important:** Use **Windows PowerShell** (not Command Prompt/CMD) for all steps in this guide.
+> PowerShell scripts (`.ps1` files) will not execute in CMD — they will only open as text files.
+
 At a high level:
 
 ```powershell
-git clone --filter=blob:none --sparse https://github.com/open-edge-platform/edge-ai-suites.git
+git clone --filter=blob:none --sparse https://github.com/open-edge-platform/edge-ai-suites.git -b main
 cd edge-ai-suites
 git sparse-checkout set education-ai-suite/ai-teaching-assistant
 cd education-ai-suite/ai-teaching-assistant
