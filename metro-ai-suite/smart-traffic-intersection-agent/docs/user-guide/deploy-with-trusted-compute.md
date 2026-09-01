@@ -117,6 +117,29 @@ This single command will:
 - Build Docker images
 - Start services in the Smart Traffic Intersection Agent's application stack with Trusted Compute enabled
 
+### Run the Traffic Agent with OpenShell
+
+To run the Traffic Agent backend and UI in an OpenShell sandbox while retaining Trusted
+Compute for the OVMS service, install and start the local OpenShell gateway, then run:
+
+```bash
+export ENABLE_TC=true
+export ENABLE_OPENSHELL=true
+export VLM_MODEL_NAME=OpenVINO/Phi-3.5-vision-instruct-int8-ov
+export VLM_TARGET_DEVICE=CPU
+source ./setup.sh --setup
+```
+
+With `ENABLE_OPENSHELL=true`, Docker Compose runs the DL Streamer, OVMS, and Metrics
+Manager services. The script starts the `traffic-agent` image as an OpenShell sandbox,
+forwards its API on port `8081` and UI on port `7860`, and connects it to the host-published
+OVMS and Metrics Manager endpoints. Stop or clean the deployment with the same environment
+variables set:
+
+```bash
+source ./setup.sh --clean --keep-models
+```
+
 ### Option B: GPU Deployment
 
 #### Step 1: Bind GPU to vfio-pci

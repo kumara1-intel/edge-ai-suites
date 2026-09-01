@@ -104,6 +104,22 @@ class ConfigService:
             if "mqtt" not in config:
                 config["mqtt"] = {}
             config["mqtt"]["port"] = int(os.getenv("MQTT_PORT"))
+        if os.getenv("MQTT_TRANSPORT"):
+            if "mqtt" not in config:
+                config["mqtt"] = {}
+            config["mqtt"]["transport"] = os.getenv("MQTT_TRANSPORT")
+        if os.getenv("MQTT_PROXY_HOST"):
+            if "mqtt" not in config:
+                config["mqtt"] = {}
+            config["mqtt"]["proxy_host"] = os.getenv("MQTT_PROXY_HOST")
+        if os.getenv("MQTT_PROXY_PORT"):
+            if "mqtt" not in config:
+                config["mqtt"] = {}
+            config["mqtt"]["proxy_port"] = int(os.getenv("MQTT_PROXY_PORT"))
+        if os.getenv("MQTT_USE_TLS"):
+            if "mqtt" not in config:
+                config["mqtt"] = {}
+            config["mqtt"]["use_tls"] = os.getenv("MQTT_USE_TLS").lower() in ["true", "1", "yes"]
         
         # Weather configuration
         if os.getenv("WEATHER_MOCK"):

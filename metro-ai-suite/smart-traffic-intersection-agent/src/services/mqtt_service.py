@@ -12,6 +12,7 @@ from queue import Queue
 import threading
 
 import paho.mqtt.client as mqtt
+import socks
 import structlog
 
 from models import CameraDataMessage, CameraImage
@@ -54,6 +55,9 @@ class MQTTService:
         # MQTT connection settings - use config or fallback to localhost
         self.host = self.mqtt_config.get("host", "localhost")
         self.port = self.mqtt_config.get("port", 1883)
+        self.transport = self.mqtt_config.get("transport", "tcp")
+        self.proxy_host = self.mqtt_config.get("proxy_host")
+        self.proxy_port = self.mqtt_config.get("proxy_port")
         self.use_tls = self.mqtt_config.get("use_tls", False)
         self.ca_cert_path = self.mqtt_config.get("ca_cert_path", "../secrets/certs/scenescape-ca.pem")
         self.cert_required = self.mqtt_config.get("cert_required", True)
@@ -86,6 +90,9 @@ class MQTTService:
         logger.info("MQTT service initialized", 
                    host=self.host, 
                    port=self.port, 
+                   transport=self.transport,
+                   proxy_host=self.proxy_host,
+                   proxy_port=self.proxy_port,
                    use_tls=self.use_tls,
                    has_auth=bool(self.username),
                    cert_required=self.cert_required,
@@ -97,7 +104,13 @@ class MQTTService:
     async def initialize(self) -> None:
         """Initialize MQTT client."""
         try:
-            self.client = mqtt.Client()
+            self.client = mqtt.Client(transport=self.transport)
+            if self.proxy_host and self.proxy_port:
+                self.client.proxy_set(
+                    proxy_type=socks.HTTP,
+                    proxy_addr=self.proxy_host,
+                    proxy_port=self.proxy_port,
+                )
             
             # Configure authentication
             if self.username and self.password:

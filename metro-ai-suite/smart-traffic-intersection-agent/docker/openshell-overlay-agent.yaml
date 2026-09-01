@@ -1,0 +1,26 @@
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+# OpenShell overlay for the Traffic Intersection Agent. The agent itself is
+# launched as an OpenShell sandbox by setup.sh; its Compose dependencies stay
+# on the host stack.
+
+services:
+  traffic-agent:
+    profiles:
+      - docker-agent
+
+  ovms-service:
+    ports: !override
+      - "${OPENSHELL_DOCKER_GATEWAY:-172.18.0.1}:${OPENSHELL_OVMS_PORT:-8000}:8000"
+
+  metrics-manager:
+    ports:
+      - "${OPENSHELL_DOCKER_GATEWAY:-172.18.0.1}:${OPENSHELL_METRICS_PORT:-9090}:9090"
+
+  # OpenShell's L7 websocket proxy cannot inspect TLS-wrapped traffic, so the sandboxed
+  # agent connects over the plaintext WebSocket listener added by setup.sh instead of the
+  # TLS listener on 1884.
+  broker:
+    ports:
+      - "${OPENSHELL_DOCKER_GATEWAY:-172.18.0.1}:${OPENSHELL_MQTT_PORT:-1885}:1885"

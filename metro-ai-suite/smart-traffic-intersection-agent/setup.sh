@@ -44,6 +44,22 @@ CLONE_PATH="$APP_DIR/$CLONE_DIR"
 export DEPS_DIR="$CLONE_PATH/metro-ai-suite/metro-vision-ai-app-recipe"
 export RI_DIR="$DEPS_DIR/$SAMPLE_APP"
 export OVMS_CONFIG_DIR="${APP_DIR}/.ovms"
+OPENSHELL_OVERLAY_AGENT=""
+OPENSHELL_SANDBOX_NAME=""
+
+if [ "$ENABLE_OPENSHELL" = "true" ]; then
+    if ! command -v openshell >/dev/null 2>&1; then
+        echo -e "${RED}ERROR: OpenShell CLI is required when ENABLE_OPENSHELL=true.${NC}"
+        return 1
+    fi
+    OPENSHELL_OVERLAY_AGENT="-f ${APP_DIR}/docker/openshell-overlay-agent.yaml"
+    OPENSHELL_SANDBOX_NAME="stia-$(printf '%s' "$PROJECT_NAME" | tr '[:upper:]_' '[:lower:]-' | cut -c1-14)"
+    export OPENSHELL_DOCKER_GATEWAY=$(docker network inspect openshell-docker --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)
+    if [ -z "$OPENSHELL_DOCKER_GATEWAY" ]; then
+        echo -e "${RED}ERROR: OpenShell Docker network is unavailable. Start the local OpenShell gateway first.${NC}"
+        return 1
+    fi
+fi
 
 if [ "$ENABLE_TC" = "true" ]; then
     TC_OVERLAY_AGENT="-f ${APP_DIR}/docker/tc-overlay-agent.yaml"
@@ -123,11 +139,15 @@ elif [ "$1" = "--restart" ] && [ "$#" -eq 2 ] && [ "$2" != "agent" ] && [ "$2" !
 elif [ "$1" = "--stop" ] || [ "$1" = "--clean" ]; then
     echo -e "${YELLOW}Stopping Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${YELLOW}... ${NC}"
 
+    if [ "$ENABLE_OPENSHELL" = "true" ]; then
+        openshell sandbox delete "$OPENSHELL_SANDBOX_NAME" >/dev/null 2>&1 || true
+    fi
+
     # check if ri-compose.yaml exists and run docker compose down accordingly
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose --project-directory "$DEPS_DIR" -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p ${PROJECT_NAME} down
+        docker compose --project-directory "$DEPS_DIR" -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p ${PROJECT_NAME} down
     else
-        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p ${PROJECT_NAME} down 2> /dev/null
+        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p ${PROJECT_NAME} down 2> /dev/null
     fi
 
     if [ $? -ne 0 ]; then
@@ -193,7 +213,7 @@ check_and_setup_dependencies() {
         # Run git clone to fetch the dependencies (sparse, shallow)
         echo -e "${YELLOW}Dependencies not found. Cloning repository...${NC}"
         git clone --filter=blob:none --sparse --depth 1 \
-            --branch release-2026.0.0 \
+            --branch 2026.2-20260825 \
             https://github.com/open-edge-platform/edge-ai-suites.git \
             "$CLONE_PATH"
         git -C "$CLONE_PATH" sparse-checkout set metro-ai-suite/metro-vision-ai-app-recipe
@@ -249,6 +269,23 @@ check_and_setup_dependencies() {
         #Create symbolic link to docker-compose.yml in docker dir of agent application
         rm "$APP_DIR/docker/ri-compose.yaml" 2> /dev/null
         ln -sf "$DEPS_DIR/docker-compose.yml" "$APP_DIR/docker/ri-compose.yaml"
+    fi
+
+    # OpenShell's L7 websocket proxy cannot inspect TLS-wrapped WebSocket traffic, so the
+    # sandboxed agent talks to the broker over a plaintext WebSocket listener instead. This
+    # traffic never leaves the host's Docker bridge network.
+    if [ "$ENABLE_OPENSHELL" = "true" ]; then
+        local mosquitto_conf="$RI_DIR/src/mosquitto/mosquitto-secure.conf"
+        local ws_port="${OPENSHELL_MQTT_PORT:-1885}"
+        if [ -f "$mosquitto_conf" ] && ! grep -q "^listener ${ws_port}$" "$mosquitto_conf"; then
+            echo -e "${BLUE}==> Adding plaintext WebSocket listener (port ${ws_port}) for OpenShell sandbox MQTT access...${NC}"
+            docker run --rm -v "$mosquitto_conf:/tmp/mosquitto.conf" busybox \
+                sh -c "printf '\nlistener ${ws_port}\nprotocol websockets\n' >> /tmp/mosquitto.conf"
+            if [ $? -ne 0 ]; then
+                echo -e "${RED}ERROR: Failed to add OpenShell WebSocket listener to broker config.${NC}"
+                return 1
+            fi
+        fi
     fi
     return 0
 }
@@ -533,6 +570,10 @@ print_all_service_host_endpoints() {
                 ;;
         esac
     done
+    if [ "$ENABLE_OPENSHELL" = "true" ]; then
+        echo -e "${CYAN}Access Traffic Intersection Agent API Docs -> http://$HOST_IP:8081/docs${NC}"
+        echo -e "${CYAN}Access Traffic Intersection Agent UI -> http://$HOST_IP:7860${NC}"
+    fi
     echo -e "${MAGENTA}=======================================================${NC}"
     echo -e
 }
@@ -567,9 +608,13 @@ build_service() {
 
     # Build the service images
     if [ -L "${APP_DIR}/docker/ri-compose.yaml" ]; then
-        docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME build
+        docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p $PROJECT_NAME build
     else
-        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME build
+        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p $PROJECT_NAME build
+    fi
+
+    if [ $? -eq 0 ] && [ "$ENABLE_OPENSHELL" = "true" ]; then
+        docker compose -f "${APP_DIR}/docker/agent-compose.yaml" --profile docker-agent -p $PROJECT_NAME build traffic-agent
     fi
 
     if [ $? -eq 0 ]; then
@@ -580,6 +625,64 @@ build_service() {
     fi
 }
 
+start_openshell_agent() {
+    local certificate_path="$RI_DIR/src/secrets/certs/scenescape-ca.pem"
+    local openshell_gateway
+    local agent_image="${REGISTRY:-}smart-traffic-intersection-agent:${TAG:-latest}"
+
+    if [ ! -f "$certificate_path" ]; then
+        echo -e "${RED}ERROR: OpenShell agent certificate not found: ${certificate_path}${NC}"
+        return 1
+    fi
+
+    openshell_gateway=$(docker network inspect openshell-docker --format '{{range .IPAM.Config}}{{.Gateway}}{{end}}' 2>/dev/null)
+    if [ -z "$openshell_gateway" ]; then
+        echo -e "${RED}ERROR: OpenShell Docker network is unavailable. Start the local OpenShell gateway first.${NC}"
+        return 1
+    fi
+
+    openshell sandbox delete "$OPENSHELL_SANDBOX_NAME" >/dev/null 2>&1 || true
+    if ! openshell sandbox create \
+        --name "$OPENSHELL_SANDBOX_NAME" \
+        --from "$agent_image" \
+        --upload "$certificate_path:/app/secrets/certs/scenescape-ca.pem" \
+        --env "VLM_BASE_URL=http://host.docker.internal:${OPENSHELL_OVMS_PORT:-8000}" \
+        --env "METRICS_MANAGER_URL=http://host.docker.internal:${OPENSHELL_METRICS_PORT:-9090}" \
+        --env "METRICS_STREAM_URL=http://host.docker.internal:${OPENSHELL_METRICS_PORT:-9090}/metrics/stream" \
+        --env "METRICS_HEALTH_URL=http://host.docker.internal:${OPENSHELL_METRICS_PORT:-9090}/health" \
+        --env "VLM_MODEL_NAME=${VLM_MODEL_NAME}" \
+        --env "VLM_TARGET_DEVICE=${VLM_TARGET_DEVICE:-CPU}" \
+        --env "USE_API=true" \
+        --env "REFRESH_INTERVAL=${REFRESH_INTERVAL:-15}" \
+        --env "LOG_LEVEL=${LOG_LEVEL:-INFO}" \
+        --env "MQTT_HOST=host.docker.internal" \
+        --env "MQTT_PORT=${OPENSHELL_MQTT_PORT:-1885}" \
+        --env "MQTT_TRANSPORT=websockets" \
+        --env "MQTT_USE_TLS=false" \
+        --env "MQTT_PROXY_HOST=10.200.0.1" \
+        --env "MQTT_PROXY_PORT=3128" \
+        --env "INTERSECTION_NAME=${INTERSECTION_NAME}" \
+        --env "INTERSECTION_LATITUDE=${INTERSECTION_LATITUDE}" \
+        --env "INTERSECTION_LONGITUDE=${INTERSECTION_LONGITUDE}" \
+        --env "WEATHER_MOCK=${WEATHER_MOCK:-false}" \
+        --env "HIGH_DENSITY_THRESHOLD=${HIGH_DENSITY_THRESHOLD:-10}" \
+        --no-tty -- true; then
+        return 1
+    fi
+
+    openshell policy update "$OPENSHELL_SANDBOX_NAME" \
+        --add-endpoint "host.docker.internal:${OPENSHELL_MQTT_PORT:-1885}:read-write:websocket:enforce:allowed-ip=${openshell_gateway}" \
+        --add-endpoint "host.docker.internal:${OPENSHELL_OVMS_PORT:-8000}:read-write:rest:enforce:allowed-ip=${openshell_gateway}" \
+        --add-endpoint "host.docker.internal:${OPENSHELL_METRICS_PORT:-9090}:read-write:rest:enforce:allowed-ip=${openshell_gateway}" \
+        --binary /usr/local/bin/python \
+        --wait || return 1
+    nohup openshell sandbox exec -n "$OPENSHELL_SANDBOX_NAME" -- \
+        bash -lc 'export PATH=/app/.venv/bin:$PATH; cd /app && exec bash docker-entrypoint.sh' \
+        > "${APP_DIR}/.openshell-traffic-agent.log" 2>&1 &
+    openshell forward start --background "${AGENT_BACKEND_PORT:-8081}" "$OPENSHELL_SANDBOX_NAME" || return 1
+    openshell forward start --background "${AGENT_UI_PORT:-7860}" "$OPENSHELL_SANDBOX_NAME"
+}
+
 # Build agent Backend/UI image and run its container along with all other services - to run Traffic Intersection Agent End-to-End
 build_and_start_service() {
     echo -e "${BLUE}==> Starting Smart-Traffic-Intersection-Agent ${RED}${PROJECT_NAME} ${BLUE}...${NC}"
@@ -588,7 +691,12 @@ build_and_start_service() {
     prepare_ovms_model || return 1
 
     # Build and start the services
-    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME up -d --build
+    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p $PROJECT_NAME up -d --build
+
+    if [ $? -eq 0 ] && [ "$ENABLE_OPENSHELL" = "true" ]; then
+        build_service || return 1
+        start_openshell_agent
+    fi
 
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Smart-Traffic-Intersection-Agent Services built and started successfully!${NC}"
@@ -607,7 +715,11 @@ start_service() {
     prepare_ovms_model || return 1
 
     # Start the services
-    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME up -d --no-build
+    docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p $PROJECT_NAME up -d --no-build
+
+    if [ $? -eq 0 ] && [ "$ENABLE_OPENSHELL" = "true" ]; then
+        start_openshell_agent
+    fi
 
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Smart-Traffic-Intersection-Agent Services started successfully!${NC}"
@@ -630,15 +742,22 @@ restart_service() {
             local AGENT_SERVICES="traffic-agent ovms-service metrics-manager"
 
             # Stop the Traffic Intersection Agent Backend/UI Service
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME stop $AGENT_SERVICES
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME rm -f $AGENT_SERVICES
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p $PROJECT_NAME stop $AGENT_SERVICES
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p $PROJECT_NAME rm -f $AGENT_SERVICES
+            if [ "$ENABLE_OPENSHELL" = "true" ]; then
+                openshell sandbox delete "$OPENSHELL_SANDBOX_NAME" >/dev/null 2>&1 || true
+            fi
 
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to stop Traffic Intersection Agent Backend/UI service!${NC}"
                 return 1
             fi
 
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME up -d --force-recreate $AGENT_SERVICES
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p $PROJECT_NAME up -d --force-recreate $AGENT_SERVICES
+
+            if [ $? -eq 0 ] && [ "$ENABLE_OPENSHELL" = "true" ]; then
+                start_openshell_agent
+            fi
 
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}Traffic Intersection Agent Backend/UI restarted successfully!${NC}"
@@ -690,14 +809,21 @@ restart_service() {
             fi
 
             # Stop all services
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME down
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p $PROJECT_NAME down
+            if [ "$ENABLE_OPENSHELL" = "true" ]; then
+                openshell sandbox delete "$OPENSHELL_SANDBOX_NAME" >/dev/null 2>&1 || true
+            fi
             if [ $? -ne 0 ]; then
                 echo -e "${RED}Failed to stop services for Traffic Intersection Agent!${NC}"
                 return 1
             fi
 
             # Restart all services
-            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT -p $PROJECT_NAME up -d --force-recreate
+            docker compose --project-directory $DEPS_DIR -f "${APP_DIR}/docker/ri-compose.yaml" -f "${APP_DIR}/docker/ri-override.yaml" -f "${APP_DIR}/docker/agent-compose.yaml" $TC_OVERLAY_AGENT $OPENSHELL_OVERLAY_AGENT -p $PROJECT_NAME up -d --force-recreate
+
+            if [ $? -eq 0 ] && [ "$ENABLE_OPENSHELL" = "true" ]; then
+                start_openshell_agent
+            fi
 
             if [ $? -eq 0 ]; then
                 echo -e "${GREEN}All dependencies and Backend/UI services for Traffic Intersection Agent restarted successfully!${NC}"
