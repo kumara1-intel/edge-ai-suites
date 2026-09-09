@@ -66,6 +66,12 @@ healthcheck:
   timeoutSeconds: 10
   failureThreshold: 3
 
+# OpenShell sandbox deployment — an alternative isolation model to Trusted Compute.
+# When enabled, the traffic-agent renders as a Kubernetes Agent Sandbox custom resource
+# instead of a Deployment (requires the Agent Sandbox CRD/controller in-cluster).
+openshell:
+  enabled: false
+
 resources:
 
 # Volume for persistent agent data

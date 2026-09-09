@@ -117,29 +117,6 @@ This single command will:
 - Build Docker images
 - Start services in the Smart Traffic Intersection Agent's application stack with Trusted Compute enabled
 
-### Run the Traffic Agent with OpenShell
-
-To run the Traffic Agent backend and UI in an OpenShell sandbox while retaining Trusted
-Compute for the OVMS service, install and start the local OpenShell gateway, then run:
-
-```bash
-export ENABLE_TC=true
-export ENABLE_OPENSHELL=true
-export VLM_MODEL_NAME=OpenVINO/Phi-3.5-vision-instruct-int8-ov
-export VLM_TARGET_DEVICE=CPU
-source ./setup.sh --setup
-```
-
-With `ENABLE_OPENSHELL=true`, Docker Compose runs the DL Streamer, OVMS, and Metrics
-Manager services. The script starts the `traffic-agent` image as an OpenShell sandbox,
-forwards its API on port `8081` and UI on port `7860`, and connects it to the host-published
-OVMS and Metrics Manager endpoints. Stop or clean the deployment with the same environment
-variables set:
-
-```bash
-source ./setup.sh --clean --keep-models
-```
-
 ### Option B: GPU Deployment
 
 #### Step 1: Bind GPU to vfio-pci
@@ -193,7 +170,38 @@ source setup.sh --restart [service_type]
 source setup.sh --clean [option]
 ```
 
-## 4. Accessing the Services
+## 4. Run the Traffic Agent with OpenShell (Optional)
+
+To run the Traffic Agent backend and UI in an OpenShell sandbox while retaining Trusted
+Compute for the OVMS service (CPU or GPU), install the OpenShell CLI and start its local
+gateway, then add `export ENABLE_OPENSHELL=true` to the setup command for whichever option
+you chose in the previous step.
+
+### Install the OpenShell CLI
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+```
+
+This installs the `openshell` CLI along with a local gateway backed by Docker or Podman.
+See the [OpenShell Quickstart](https://docs.nvidia.com/openshell/latest/get-started/quickstart) for prerequisites and other install options.
+
+With `ENABLE_OPENSHELL=true`, Docker Compose runs the DL Streamer, OVMS, and Metrics
+Manager services. The script starts the `traffic-agent` image as an OpenShell sandbox,
+forwards its API on port `8081` and UI on port `7860`, and connects it to the host-published
+OVMS and Metrics Manager endpoints:
+
+> **Note:** If using `VLM_TARGET_DEVICE=GPU`, bind the GPU to `vfio-pci` first as described in [Option B, Step 1](#step-1-bind-gpu-to-vfio-pci).
+
+```bash
+# Deploy with Trusted Compute and OpenShell enabled
+export ENABLE_TC=true
+export VLM_TARGET_DEVICE=CPU or GPU
+export ENABLE_OPENSHELL=true
+source ./setup.sh --setup
+```
+
+## 5. Accessing the Services
 
 After the setup process completes, the URLs for all services are displayed on the terminal.
 You can get the URL for **Traffic Intersection Agent UI** and **Traffic Intersection Agent API Docs**
@@ -213,7 +221,7 @@ For advanced configuration options and operational tasks, refer to the following
 - **[Upgrading](./get-started.md#upgrading)**: Update to newer versions of STIA
 - **[Troubleshooting](./get-started.md#troubleshooting)**: Common issues and solutions
 
-## 5. Clean Up the Deployment
+## 6. Clean Up the Deployment
 
 Follow the steps below in order to cleanly remove the deployment.
 
@@ -239,11 +247,22 @@ This will restore the display manager and graphical display on the host.
 
 To uninstall Trusted Compute from the host, refer to the [Trusted Compute documentation](https://github.com/open-edge-platform/trusted-compute/blob/main/docs/trusted_compute_baremetal.md).
 
+**Step 4. Uninstall OpenShell** (if deployed with `ENABLE_OPENSHELL=true`):
+
+Stop the local gateway service:
+
+```bash
+systemctl --user stop openshell-gateway
+```
+
+To fully remove OpenShell, see the
+[OpenShell installation guide](https://docs.nvidia.com/openshell/latest/about/installation) for platform-specific uninstall steps.
+
 ## Other Deployment Options
 
 For Kubernetes-based deployments with Trusted Compute:
 
-- **[Deploy with Helm and Trusted Compute](./get-started/deploy-with-trusted-compute-helm.md)**: Use Helm to deploy the application with Trusted Compute to a Kubernetes cluster for scalable and production-ready deployments with hardware isolation.
+- **[Deploy with Helm and Trusted Compute](./get-started/deploy-with-trusted-compute-helm.md)**: Use Helm to deploy the application with Trusted Compute to a Kubernetes cluster for scalable and production-ready deployments with hardware isolation. This guide also covers running the traffic-agent as an OpenShell Agent Sandbox.
 
 ## Learn More
 

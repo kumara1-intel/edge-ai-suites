@@ -1,7 +1,8 @@
 {{/*
-Copyright (C) 2025 Intel Corporation
+Copyright (C) 2026 Intel Corporation
 SPDX-License-Identifier: Apache-2.0
 */}}
+{{- if .Values.openshell.enabled }}
 {{- $metricsManagerEnabled := .Values.metricsManager.enabled -}}
 {{- $metricsManagerName := include "stia.metricsManager.fullname" . -}}
 {{- $defaultMetricsManagerUrl := printf "http://%s:%v" $metricsManagerName .Values.metricsManager.service.metricsPort -}}
@@ -13,20 +14,15 @@ SPDX-License-Identifier: Apache-2.0
 {{- if ne (toString .Values.metrics.pushEnabled) "" -}}
 {{- $metricsPushEnabled = toString .Values.metrics.pushEnabled -}}
 {{- end -}}
-{{- if not .Values.openshell.enabled }}
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: agents.x-k8s.io/v1beta1
+kind: Sandbox
 metadata:
   name: {{ include "stia.trafficAgent.fullname" . }}
   labels:
     {{- include "stia.labels" . | nindent 4 }}
     app.kubernetes.io/component: traffic-agent
 spec:
-  replicas: {{ .Values.replicas }}
-  selector:
-    matchLabels:
-      app: {{ include "stia.trafficAgent.fullname" . }}
-  template:
+  podTemplate:
     metadata:
       labels:
         app: {{ include "stia.trafficAgent.fullname" . }}
@@ -137,7 +133,7 @@ spec:
             timeoutSeconds: {{ .Values.healthcheck.timeoutSeconds }}
             failureThreshold: {{ .Values.healthcheck.failureThreshold }}
           resources:
-            {{- toYaml .Values.resources | nindent 12 }}
+            {{- toYaml (default (dict) .Values.resources) | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
       {{- if or .Values.tls.caCert .Values.tls.caCertSecretName }}
@@ -151,5 +147,25 @@ spec:
                 path: scenescape-ca.pem
             {{- end }}
       {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "stia.trafficAgent.fullname" . }}
+  labels:
+    {{- include "stia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: traffic-agent
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: backend
+      port: {{ .Values.service.backendPort }}
+      targetPort: 8081
+      protocol: TCP
+    - name: ui
+      port: {{ .Values.service.uiPort }}
+      targetPort: 7860
+      protocol: TCP
+  selector:
+    app: {{ include "stia.trafficAgent.fullname" . }}
 {{- end }}
-

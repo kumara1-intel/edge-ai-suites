@@ -239,7 +239,64 @@ Follow these verification steps to ensure the application is running correctly:
   kubectl logs -l app=stia-traffic-agent -n <your-namespace> -f
   ```
 
-## 6. Clean Up Deployment
+## 6. Run the Traffic Agent as an OpenShell Sandbox (Alternative)
+
+As an alternative to the Deployment-based traffic-agent above, you can run it as an
+OpenShell Agent Sandbox — a different isolation model.
+
+### Step 1: Install the OpenShell Gateway
+
+Deploy the OpenShell gateway into the cluster via its Helm chart:
+
+```bash
+helm install openshell oci://ghcr.io/nvidia/openshell/helm-chart
+```
+
+See the [Helm chart README](https://github.com/NVIDIA/OpenShell/blob/main/deploy/helm/openshell/README.md) for available versions and configuration.
+
+### Step 2: Install the Agent Sandbox CRD/Controller
+
+The traffic-agent renders as an `agents.x-k8s.io/v1beta1 Sandbox` custom resource, so the
+[kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) CRD and
+controller must be installed in the cluster first:
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.1/sandbox.yaml
+```
+
+Verify the controller is running:
+
+```bash
+kubectl get pods -n agent-sandbox-system
+```
+
+### Step 3: Deploy with `openshell.enabled=true`
+
+```bash
+helm install stia . -n <your-namespace> --create-namespace \
+  --set openshell.enabled=true \
+  --set ovms.trustedCompute.enabled=true \
+  --set ovms.gpu.enabled=false
+```
+
+This deploys OVMS, Metrics Manager, and the traffic-agent (as a Sandbox pod) with a single
+command — no separate CLI or gateway step is needed.
+
+### Step 4: Verify
+
+```bash
+kubectl get pods -n <your-namespace> -l app.kubernetes.io/instance=stia
+kubectl get sandbox -n <your-namespace>
+kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=stia -n <your-namespace> --timeout=600s
+```
+
+Access and clean up the deployment the same way as described in [steps 5 and 7](#5-access-and-verify-the-application) above.
+
+> **Note:** Unlike an OpenShell CLI/gateway-based sandbox, this deployment does not get
+> OpenShell's L7 network-policy enforcement — the pod reaches OVMS/Metrics Manager/MQTT the
+> same way a normal Deployment pod would (in-cluster Service DNS).
+
+## 7. Clean Up Deployment
 
 Follow the steps below in order to cleanly remove the deployment.
 
@@ -271,6 +328,12 @@ This will restore the display manager and graphical display on the host.
 **Step 3. Clean Up the Trusted Compute Deployment:**
 
 To uninstall Trusted Compute from the k3s nodes after you have removed the application, refer to the [Trusted Compute documentation](https://github.com/open-edge-platform/trusted-compute/blob/main/docs/trusted_compute_baremetal.md).
+
+**Step 4. Uninstall the OpenShell Gateway** (if deployed with `openshell.enabled=true`):
+
+```bash
+helm uninstall openshell -n <openshell-namespace>
+```
 
 ## Troubleshooting
 
