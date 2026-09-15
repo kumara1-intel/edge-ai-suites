@@ -8,6 +8,10 @@ pgpass:
 
 kubernetesAPIEndpoint: https://kubernetes.default.svc.cluster.local
 
+# Namespace where OpenShell schedules sandboxed agent pods. Used to scope the
+# NetworkPolicy restricting access to the broker's plaintext WebSocket listener (1885).
+openshellSandboxNamespace: "openshell"
+
 # Global configuration
 global:
   # External IP address for certificate generation

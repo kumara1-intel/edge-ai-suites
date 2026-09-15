@@ -3,14 +3,9 @@
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 #
-# Runs the Traffic Intersection Agent as an OpenShell sandbox pod inside the same
-# Kubernetes cluster as the Helm release deployed with `openshell.enabled=true` (see
-# values.yaml), via a --gateway already registered with the CLI using a
-# Kubernetes/Agent-Sandbox compute driver (install the gateway's Helm chart and
-# register it with `openshell gateway add` before running this script).
-# The sandbox reaches OVMS/Metrics Manager via ClusterIP Service DNS. The MQTT broker
-# (a separate "Smart Intersection" release) must expose a plaintext WebSocket listener
-# (OpenShell's L7 proxy cannot inspect TLS) — pass its address via --mqtt-host/--mqtt-ws-port.
+# Runs the Traffic Intersection Agent as an OpenShell sandbox pod alongside a Helm
+# release deployed with `openshell.enabled=true`, using a --gateway already registered
+# with a Kubernetes/Agent-Sandbox compute driver.
 #
 # Usage:
 #   ./openshell-sandbox.sh up   --mqtt-host broker.default.svc.cluster.local --mqtt-ws-port 1885 [--release stia] [--namespace default] [--gateway kubernetes]
@@ -63,17 +58,14 @@ sandbox_name() {
     echo "stia-$(printf '%s-%s' "$RELEASE" "$NAMESPACE" | tr '[:upper:]_' '[:lower:]-' | cut -c1-14)"
 }
 
-# ClusterIP Service port (by name) for a service in the release's namespace — not a
-# NodePort, since the sandbox pod lives in-cluster and can reach ClusterIP directly.
+# ClusterIP Service port (by name) for a service in the release's namespace.
 service_port() {
     local service="$1" port_name="$2"
     kubectl get svc "$service" -n "$NAMESPACE" \
         -o jsonpath="{.spec.ports[?(@.name==\"${port_name}\")].port}"
 }
 
-# Read the model name/device/weight-format actually configured for this release's OVMS
-# subchart, so the sandboxed agent computes the same OVMS-registered model id at runtime
-# (see VLMService._compute_ovms_model_name in src/services/vlm_service.py).
+# Read an ovms.env.* value from the release so the sandboxed agent matches the OVMS-registered model id.
 ovms_value() {
     helm get values -a "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null \
         | python3 -c "import json,sys; print(json.load(sys.stdin).get('ovms',{}).get('env',{}).get(sys.argv[1],''))" "$1"
@@ -186,8 +178,7 @@ up() {
         --wait
 
     log "Starting the agent inside the sandbox..."
-    # These long-lived helpers must not inherit the script's stdio, or a caller piping
-    # this script (e.g. into 'tail') never sees EOF and appears to hang.
+    # Detached so piping this script (e.g. into 'tail') doesn't hang waiting for EOF.
     nohup openshell -g "$GATEWAY" sandbox exec -n "$sandbox" -- \
         bash -lc 'export PATH=/app/.venv/bin:$PATH; cd /app && exec bash docker-entrypoint.sh' \
         < /dev/null > "$agent_log" 2>&1 &
