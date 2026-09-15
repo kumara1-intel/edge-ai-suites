@@ -59,7 +59,8 @@ require_cmd() {
 }
 
 sandbox_name() {
-    echo "stia-$(printf '%s-%s' "$RELEASE" "$NAMESPACE" | tr '[:upper:]_' '[:lower:]-' | cut -c1-30)"
+    # OpenShell sandbox names are capped at 19 characters.
+    echo "stia-$(printf '%s-%s' "$RELEASE" "$NAMESPACE" | tr '[:upper:]_' '[:lower:]-' | cut -c1-14)"
 }
 
 # ClusterIP Service port (by name) for a service in the release's namespace — not a
