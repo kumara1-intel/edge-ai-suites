@@ -26,15 +26,13 @@ metadata:
     {{- include "stia.labels" . | nindent 4 }}
     app.kubernetes.io/component: traffic-agent
 spec:
-  {{- if not .Values.openshell.enabled }}
+  {{- if .Values.openshell.enabled }}
+  podTemplate:
+  {{- else }}
   replicas: {{ .Values.replicas }}
   selector:
     matchLabels:
       app: {{ include "stia.trafficAgent.fullname" . }}
-  {{- end }}
-  {{- if .Values.openshell.enabled }}
-  podTemplate:
-  {{- else }}
   template:
   {{- end }}
     metadata:
@@ -161,4 +159,3 @@ spec:
                 path: scenescape-ca.pem
             {{- end }}
       {{- end }}
-
