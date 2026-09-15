@@ -241,36 +241,76 @@ Follow these verification steps to ensure the application is running correctly:
 
 ## 6. Run the Traffic Agent as an OpenShell Sandbox (Alternative)
 
-As an alternative to the Deployment-based traffic-agent above, you can run it as an
-OpenShell Agent Sandbox — a different isolation model.
+As an alternative to the Deployment-based traffic-agent above, you can run it as an OpenShell
+sandbox. This adds a second isolation layer on top of Trusted Compute: the agent process runs
+under a Landlock filesystem policy and all of its egress is forced through OpenShell's L7 proxy,
+which only permits the three endpoints the agent actually needs. Combined with the `kata-qemu`
+runtime class, the agent also runs inside its own hardware-isolated VM with a separate kernel.
 
 ### Step 1: Install the OpenShell Gateway
 
 Deploy the OpenShell gateway into the cluster via its Helm chart:
 
 ```bash
-helm install openshell oci://ghcr.io/nvidia/openshell/helm-chart
+helm install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.0.116 \
+  -n openshell --create-namespace \
+  --set server.defaultRuntimeClassName=kata-qemu \
+  --set server.sandboxImagePullPolicy=IfNotPresent
 ```
+
+- `server.defaultRuntimeClassName=kata-qemu` makes every sandbox pod run inside a Kata VM.
+  Omit it if your cluster has no `kata-qemu` RuntimeClass.
+- `server.sandboxImagePullPolicy=IfNotPresent` is required when the agent image is only
+  present in the node's local container store (for example after `k3s ctr images import`).
+  With the default `Always`, the kubelet re-pulls from the registry and silently discards
+  the locally imported image.
 
 See the [Helm chart README](https://github.com/NVIDIA/OpenShell/blob/main/deploy/helm/openshell/README.md) for available versions and configuration.
 
 ### Step 2: Install the Agent Sandbox CRD/Controller
 
-The traffic-agent renders as an `agents.x-k8s.io/v1beta1 Sandbox` custom resource, so the
-[kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) CRD and
-controller must be installed in the cluster first:
+The OpenShell Kubernetes compute driver provisions sandboxes as
+[kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) resources, so
+the CRD and controller must be installed in the cluster first:
 
 ```bash
 kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.1/sandbox.yaml
-```
-
-Verify the controller is running:
-
-```bash
 kubectl get pods -n agent-sandbox-system
 ```
 
-### Step 3: Deploy with `openshell.enabled=true`
+### Step 3: Register the Gateway with the OpenShell CLI
+
+The sandbox is created through the OpenShell CLI, which needs to reach the gateway:
+
+```bash
+kubectl port-forward -n openshell svc/openshell 8080:8080 &
+openshell gateway add kubernetes --server https://127.0.0.1:8080
+openshell -g kubernetes status
+```
+
+Expect `Status: Connected`.
+
+> **Note:** This port-forward must stay alive for any `openshell` command to work. It is killed
+> whenever the gateway pod restarts (including on `helm upgrade`), after which the CLI reports
+> `Connection refused (os error 111)` — just re-run the port-forward.
+
+### Step 4: Expose a Plaintext MQTT WebSocket Listener
+
+OpenShell's L7 proxy cannot inspect TLS-wrapped traffic, so the Smart Intersection broker must
+offer a plaintext WebSocket listener for the sandbox to connect through. Add the following to the
+broker's `mosquitto-secure.conf` and expose port `1885` on its Service and Deployment:
+
+```conf
+listener 1885
+protocol websockets
+```
+
+Keep this listener on the in-cluster ClusterIP network only — never expose it externally.
+
+### Step 5: Deploy the Release and Create the Sandbox
+
+Deploy OVMS and Metrics Manager, but leave the traffic-agent Deployment out — the sandbox
+replaces it:
 
 ```bash
 helm install stia . -n <your-namespace> --create-namespace \
@@ -279,22 +319,45 @@ helm install stia . -n <your-namespace> --create-namespace \
   --set ovms.gpu.enabled=false
 ```
 
-This deploys OVMS, Metrics Manager, and the traffic-agent (as a Sandbox pod) with a single
-command — no separate CLI or gateway step is needed.
-
-### Step 4: Verify
+Then create the sandbox. The script reads OVMS/Metrics Manager Service DNS and the VLM settings
+straight from the release's Helm values:
 
 ```bash
-kubectl get pods -n <your-namespace> -l app.kubernetes.io/instance=stia
-kubectl get sandbox -n <your-namespace>
-kubectl wait --for=condition=ready pod -l app.kubernetes.io/instance=stia -n <your-namespace> --timeout=600s
+export REGISTRY="intel/" TAG="latest"
+./chart/openshell-sandbox.sh up \
+  --release stia --namespace <your-namespace> --gateway kubernetes \
+  --mqtt-host smart-intersection-broker.<broker-namespace>.svc.cluster.local \
+  --mqtt-ws-port 1885
 ```
 
-Access and clean up the deployment the same way as described in [steps 5 and 7](#5-access-and-verify-the-application) above.
+`REGISTRY` must match the prefix of the locally built agent image (note the trailing slash);
+without it the script falls back to an unqualified image name and the pod lands in
+`ImagePullBackOff`.
 
-> **Note:** Unlike an OpenShell CLI/gateway-based sandbox, this deployment does not get
-> OpenShell's L7 network-policy enforcement — the pod reaches OVMS/Metrics Manager/MQTT the
-> same way a normal Deployment pod would (in-cluster Service DNS).
+### Step 6: Verify
+
+```bash
+openshell -g kubernetes sandbox list
+openshell -g kubernetes policy get <sandbox-name> --base
+kubectl get pod -n openshell -o jsonpath='{.items[*].spec.runtimeClassName}{"\n"}'
+```
+
+- `sandbox list` should report `Ready`.
+- `policy get` should show `Status: Effective` with three `enforcement: enforce` endpoints
+  (broker WebSocket, OVMS REST, Metrics Manager REST), each bound to `/usr/local/bin/python`,
+  plus the Landlock `read_only`/`read_write` filesystem policy.
+- The sandbox pod's `runtimeClassName` should be `kata-qemu`. To confirm the VM is real, compare
+  kernels: `kubectl exec <sandbox-pod> -n openshell -c agent -- uname -r` differs from `uname -r`
+  on the host.
+
+The script forwards the API to `http://localhost:8081` and the UI to `http://localhost:7860`.
+Agent output is written to `chart/.openshell-sandbox-traffic-agent.log`.
+
+To remove the sandbox:
+
+```bash
+./chart/openshell-sandbox.sh down --release stia --namespace <your-namespace> --gateway kubernetes
+```
 
 ## 7. Clean Up Deployment
 
@@ -332,6 +395,7 @@ To uninstall Trusted Compute from the k3s nodes after you have removed the appli
 **Step 4. Uninstall the OpenShell Gateway** (if deployed with `openshell.enabled=true`):
 
 ```bash
+./chart/openshell-sandbox.sh down --release stia --namespace <your-namespace> --gateway kubernetes
 helm uninstall openshell -n <openshell-namespace>
 ```
 

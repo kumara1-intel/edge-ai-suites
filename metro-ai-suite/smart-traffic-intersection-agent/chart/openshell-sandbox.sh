@@ -140,9 +140,10 @@ up() {
     weather_mock=$(chart_value env.weatherMock)
     density_threshold=$(chart_value traffic.highDensityThreshold)
 
-    local sandbox agent_image
+    local sandbox agent_image agent_log
     sandbox=$(sandbox_name)
     agent_image="${REGISTRY:-}smart-traffic-intersection-agent:${TAG:-latest}"
+    agent_log="$(dirname "${BASH_SOURCE[0]}")/.openshell-sandbox-traffic-agent.log"
 
     openshell -g "$GATEWAY" sandbox delete "$sandbox" >/dev/null 2>&1 || true
 
@@ -185,16 +186,20 @@ up() {
         --wait
 
     log "Starting the agent inside the sandbox..."
+    # These long-lived helpers must not inherit the script's stdio, or a caller piping
+    # this script (e.g. into 'tail') never sees EOF and appears to hang.
     nohup openshell -g "$GATEWAY" sandbox exec -n "$sandbox" -- \
         bash -lc 'export PATH=/app/.venv/bin:$PATH; cd /app && exec bash docker-entrypoint.sh' \
-        > "$(dirname "${BASH_SOURCE[0]}")/.openshell-sandbox-traffic-agent.log" 2>&1 &
+        < /dev/null > "$agent_log" 2>&1 &
 
-    openshell -g "$GATEWAY" forward start --background "$BACKEND_PORT" "$sandbox"
-    openshell -g "$GATEWAY" forward start --background "$UI_PORT" "$sandbox"
+    openshell -g "$GATEWAY" forward start --background "$BACKEND_PORT" "$sandbox" < /dev/null >> "$agent_log" 2>&1
+    openshell -g "$GATEWAY" forward start --background "$UI_PORT" "$sandbox" < /dev/null >> "$agent_log" 2>&1
 
     echo -e "${GREEN}Traffic Intersection Agent running as OpenShell sandbox '$sandbox'.${NC}"
     echo -e "${CYAN}Access API Docs -> http://localhost:${BACKEND_PORT}/docs${NC}"
     echo -e "${CYAN}Access UI        -> http://localhost:${UI_PORT}${NC}"
+    echo -e "${CYAN}Agent log        -> ${agent_log}${NC}"
+    echo -e "${CYAN}Stop forwards    -> openshell -g ${GATEWAY} forward stop ${BACKEND_PORT} ${sandbox}${NC}"
 }
 
 down() {
