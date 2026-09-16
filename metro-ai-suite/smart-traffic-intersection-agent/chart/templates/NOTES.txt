@@ -10,6 +10,17 @@ Smart Traffic Intersection Agent — Helm chart post-install notes
    Instance : {{ .Values.intersection.name }}
    Namespace: {{ .Release.Namespace }}
 
+{{- if .Values.openshell.enabled }}
+
+2. OpenShell mode is enabled, so no traffic-agent Deployment or Service was created.
+   Create the sandbox that runs the agent:
+
+   ./chart/openshell-helm.sh up --namespace {{ .Release.Namespace }}
+
+   The script forwards the backend to http://127.0.0.1:8081 and the UI to
+   http://127.0.0.1:7860, and prints the sandbox name to use with `openshell`.
+{{- else }}
+
 2. Get the traffic-agent backend URL:
 {{- if contains "NodePort" .Values.service.type }}
    export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[?(@.name=='backend')].nodePort}" services {{ include "stia.trafficAgent.fullname" . }})
@@ -27,4 +38,5 @@ Smart Traffic Intersection Agent — Helm chart post-install notes
 {{- else if contains "ClusterIP" .Values.service.type }}
    kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "stia.trafficAgent.fullname" . }} 7860:{{ .Values.service.uiPort }} &
    echo "UI: http://127.0.0.1:7860"
+{{- end }}
 {{- end }}

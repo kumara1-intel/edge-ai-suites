@@ -30,9 +30,11 @@ RELEASE="stia"
 BACKEND_PORT="8081"
 UI_PORT="7860"
 GATEWAY="kubernetes"
-MQTT_HOST=""
-MQTT_WS_PORT="1885"
+WORKSPACE="${OPENSHELL_WORKSPACE:-openshell}"
+MQTT_HOST="${MQTT_HOST:-}"
+MQTT_WS_PORT="${MQTT_WS_PORT:-1885}"
 NAMESPACE="${NAMESPACE:-default}"
+CREATE_LOG="${TMPDIR:-/tmp}/openshell-sandbox-create.log"
 
 usage() {
     cat <<EOF
@@ -44,8 +46,11 @@ EOF
 }
 
 sandbox_name() {
-    # capped at 19 characters
-    echo "stia-$(printf '%s-%s' "$RELEASE" "$NAMESPACE" | tr '[:upper:]_' '[:lower:]-' | cut -c1-14)"
+    printf '%s-traffic-agent' "$RELEASE" | tr '[:upper:]_' '[:lower:]-'
+}
+
+osh() {
+    openshell -g "$GATEWAY" --workspace "$WORKSPACE" "$@"
 }
 
 service_port() {
@@ -81,6 +86,10 @@ up() {
     if ! openshell -g "$GATEWAY" status >/dev/null 2>&1; then
         err "OpenShell gateway '${GATEWAY}' is not reachable. Install/register a Kubernetes-driver gateway first."
         exit 1
+    fi
+
+    if ! openshell -g "$GATEWAY" workspace get "$WORKSPACE" >/dev/null 2>&1; then
+        openshell -g "$GATEWAY" workspace create --name "$WORKSPACE" >/dev/null 2>&1 || true
     fi
 
     local ovms_port metrics_port ovms_addr metrics_addr
@@ -127,7 +136,7 @@ up() {
                 mqtt_ns="$NAMESPACE"
             fi
             if [ -z "$mqtt_service" ]; then
-                err "Could not derive the broker host from release '${RELEASE}' values (mqtt.host/mqtt.serviceName). Pass --mqtt-host explicitly."
+                err "Could not derive the broker host from release '${RELEASE}' values (mqtt.host/mqtt.serviceName). Set MQTT_HOST explicitly."
                 exit 1
             fi
             MQTT_HOST="${mqtt_service}.${mqtt_ns}.svc.cluster.local"
@@ -136,15 +145,21 @@ up() {
 
     local sandbox agent_image
     sandbox=$(sandbox_name)
-    agent_image="${REGISTRY:-}smart-traffic-intersection-agent:${TAG:-latest}"
+    agent_image="${REGISTRY:-}smart-traffic-intersection-agent:${TAG:-local}"
+
+    # ':latest' forces imagePullPolicy=Always, so a locally built image is ignored
+    if [ "${agent_image##*:}" = "latest" ]; then
+        err "Tag 'latest' makes Kubernetes always pull from a registry. Re-tag the local image and set TAG (e.g. TAG=local)."
+        exit 1
+    fi
 
     #delete older sanbox pod
-    openshell -g "$GATEWAY" sandbox delete "$sandbox" >/dev/null 2>&1 || true
+    osh sandbox delete "$sandbox" >/dev/null 2>&1 || true
 
-    log "Creating OpenShell sandbox '$sandbox' (gateway '$GATEWAY', pod in namespace '$NAMESPACE') for release '$RELEASE'..."
+    log "Creating OpenShell sandbox '$sandbox' (gateway '$GATEWAY', workspace '$WORKSPACE') for release '$RELEASE' in namespace '$NAMESPACE'..."
     # create runs the entrypoint and blocks for the agent's lifetime, so detach it
-    nohup openshell -g "$GATEWAY" sandbox create --name "$sandbox" --from "$agent_image" \
-        --forward "$BACKEND_PORT" --forward "$UI_PORT" \
+    nohup openshell -g "$GATEWAY" --workspace "$WORKSPACE" sandbox create --name "$sandbox" --from "$agent_image" \
+        --forward "$BACKEND_PORT" \
         --env "VLM_BASE_URL=http://${ovms_addr}:${ovms_port}" \
         --env "METRICS_MANAGER_URL=http://${metrics_addr}:${metrics_port}" \
         --env "METRICS_STREAM_URL=http://${metrics_addr}:${metrics_port}/metrics/stream" \
@@ -167,25 +182,40 @@ up() {
         --env "INTERSECTION_LONGITUDE=${intersection_lon}" \
         --env "WEATHER_MOCK=${weather_mock:-false}" \
         --env "HIGH_DENSITY_THRESHOLD=${density_threshold:-10}" \
-        --no-tty -- bash docker-entrypoint.sh < /dev/null > /dev/null 2>&1 &
+        --no-tty -- bash -c 'cd /app && exec bash docker-entrypoint.sh' < /dev/null > "$CREATE_LOG" 2>&1 &
 
-    local i
+    # the supervisor starts in the workspace dir, so wait on the phase rather than mere existence
+    local i phase
     for i in $(seq 1 60); do
-        if openshell -g "$GATEWAY" sandbox get "$sandbox" >/dev/null 2>&1; then break; fi
+        phase=$(osh sandbox get "$sandbox" -o json 2>/dev/null \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('phase',''))" 2>/dev/null || true)
+        case "$phase" in
+            Running|Ready) break ;;
+            Error|Failed)
+                err "Sandbox '$sandbox' entered phase '$phase'. Output from 'sandbox create':"
+                cat "$CREATE_LOG" >&2 || true
+                exit 1
+                ;;
+        esac
         if [ "$i" -eq 60 ]; then
-            err "Sandbox '$sandbox' did not come up."
+            err "Sandbox '$sandbox' did not come up (last phase: '${phase:-unknown}'). Output from 'sandbox create':"
+            cat "$CREATE_LOG" >&2 || true
             exit 1
         fi
         sleep 2
     done
 
+    # 'sandbox create' accepts only one --forward, so the UI port is forwarded separately
+    osh forward stop "$UI_PORT" "$sandbox" >/dev/null 2>&1 || true
+    osh forward start "$UI_PORT" "$sandbox" --background >/dev/null 2>&1
+
     # egress is deny-by-default until this lands; the agent retries until then
     log "Applying network policy (OVMS/Metrics/MQTT reached via in-cluster Service DNS)..."
-    openshell -g "$GATEWAY" policy update "$sandbox" \
+    osh policy update "$sandbox" \
         --add-endpoint "${MQTT_HOST}:${MQTT_WS_PORT}:read-write:websocket:enforce" \
         --add-endpoint "${ovms_addr}:${ovms_port}:read-write:rest:enforce" \
         --add-endpoint "${metrics_addr}:${metrics_port}:read-write:rest:enforce" \
-        --binary /usr/local/bin/python --wait
+        --binary /app/.venv/bin/python --wait
 
     echo -e "${GREEN}Traffic Intersection Agent running as OpenShell sandbox '$sandbox'.${NC}"
     echo -e "${CYAN}Access API Docs -> http://localhost:${BACKEND_PORT}/docs${NC}"
@@ -197,7 +227,8 @@ down() {
     require_cmd openshell
     local sandbox
     sandbox=$(sandbox_name)
-    openshell -g "$GATEWAY" sandbox delete "$sandbox" >/dev/null 2>&1 || true
+    osh forward stop "$UI_PORT" "$sandbox" >/dev/null 2>&1 || true
+    osh sandbox delete "$sandbox" >/dev/null 2>&1 || true
     echo -e "${YELLOW}Deleted OpenShell sandbox '$sandbox'.${NC}"
 }
 

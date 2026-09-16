@@ -259,7 +259,23 @@ kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/downl
 kubectl get pods -n agent-sandbox-system
 ```
 
-### Step 2: Install the OpenShell Gateway
+### Step 2: Install the OpenShell CLI
+
+The sandbox is created through the OpenShell CLI, which is a separate download from the Helm
+chart. Install it from the
+[releases page](https://github.com/NVIDIA/OpenShell/releases) and keep its version identical to
+the gateway chart version used in the next step:
+
+```bash
+OPENSHELL_VERSION=0.0.116
+curl -LO https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_VERSION}/openshell_${OPENSHELL_VERSION}-1_amd64.deb
+curl -LO https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_VERSION}/openshell-checksums-sha256.txt
+sha256sum -c --ignore-missing openshell-checksums-sha256.txt
+sudo dpkg -i openshell_${OPENSHELL_VERSION}-1_amd64.deb
+openshell --version
+```
+
+### Step 3: Install the OpenShell Gateway
 
 Deploy the OpenShell gateway into the cluster via its Helm chart. Check the
 [package listing](https://github.com/NVIDIA/OpenShell/pkgs/container/openshell%2Fhelm-chart)
@@ -273,46 +289,92 @@ no-proxy list:
 helm install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.0.116 \
   -n openshell --create-namespace \
   --set server.defaultRuntimeClassName=kata-qemu \
+  --set server.sandboxNamespace=<your-namespace> \
+  --set server.auth.allowUnauthenticatedUsers=true \
   --set upstreamProxy.url=<your-proxy-url> \       # omit if no corporate proxy is required
   --set upstreamProxy.noProxy=<your-no-proxy-list> # omit if no corporate proxy is required
 ```
 
 - `server.defaultRuntimeClassName=kata-qemu` makes every sandbox pod run inside a TC VM.
+- `server.sandboxNamespace` places sandbox pods alongside the release instead of in the
+  gateway's own namespace, which is the default when the value is empty.
+
+> **Warning:** `server.auth.allowUnauthenticatedUsers=true` disables user authentication and is
+> only appropriate for a trusted local development cluster. The chart's mTLS bundle secures the
+> *transport* only — on Kubernetes it is **not** user authentication. Without this flag (or OIDC
+> / a trusted access proxy), every CLI call fails with `missing authorization header` even though
+> `status` reports `Connected`. For anything shared, configure OIDC instead; see
+> [Access Control](https://docs.nvidia.com/openshell/kubernetes/access-control).
+
+Because `server.sandboxNamespace` differs from the gateway's release namespace, copy the client
+mTLS secret into the sandbox namespace. The chart's certificate-generation Job only creates it in
+the gateway namespace, and without the copy the sandbox pod stays in `Init` with
+`MountVolume.SetUp failed ... secret "openshell-client-tls" not found`:
+
+```bash
+kubectl get secret openshell-client-tls -n openshell -o yaml \
+  | grep -v '^\s*\(namespace\|resourceVersion\|uid\|creationTimestamp\|selfLink\):' \
+  | kubectl apply -n <your-namespace> -f -
+```
+
+The broker's plaintext WebSocket listener (port `1885`) is restricted by a NetworkPolicy to a
+single namespace. Set the smart-intersection chart's `openshellSandboxNamespace` value to the
+same namespace used for `server.sandboxNamespace`, otherwise the agent cannot reach MQTT.
 
 Only `http://` proxy endpoints are supported (TLS `CONNECT` egress through it). See the
 [OpenShell Kubernetes setup guide](https://docs.nvidia.com/openshell/kubernetes/setup) and
 [Configure a Corporate Upstream Proxy](https://docs.nvidia.com/openshell/kubernetes/setup#configure-a-corporate-upstream-proxy)
 for detailed install/upgrade instructions beyond the steps above.
 
-### Step 3: Register the Gateway with the OpenShell CLI
+### Step 4: Register the Gateway with the OpenShell CLI
 
-The chart enables mTLS by default, so the CLI needs the generated client bundle to verify the
-gateway's certificate over the port-forward:
-
-```bash
-mkdir -p ~/.config/openshell/gateways/k8s/mtls
-kubectl -n openshell get secret openshell-client-tls -o jsonpath='{.data.ca\.crt}'  | base64 -d > ~/.config/openshell/gateways/k8s/mtls/ca.crt
-kubectl -n openshell get secret openshell-client-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > ~/.config/openshell/gateways/k8s/mtls/tls.crt
-kubectl -n openshell get secret openshell-client-tls -o jsonpath='{.data.tls\.key}' | base64 -d > ~/.config/openshell/gateways/k8s/mtls/tls.key
-```
-
-The sandbox is created through the OpenShell CLI, which needs to reach the gateway:
+Register the gateway first, then install the client bundle. `gateway add --local` generates its
+own self-signed certificates and **overwrites** anything already staged in the gateway's `mtls`
+directory, so copying the bundle first has no effect:
 
 ```bash
 kubectl port-forward -n openshell svc/openshell 8080:8080 &
 openshell gateway add https://127.0.0.1:8080 --local --name kubernetes
+```
+
+The chart enables mTLS by default, so the CLI needs the generated client bundle to verify the
+gateway's certificate over the port-forward. The directory name must match the gateway name
+(`kubernetes`) given above — a mismatch makes the CLI silently fall back to its self-signed
+certificates and fail with `invalid peer certificate: BadSignature`:
+
+```bash
+mkdir -p ~/.config/openshell/gateways/kubernetes/mtls
+kubectl -n openshell get secret openshell-client-tls -o jsonpath='{.data.ca\.crt}'  | base64 -d > ~/.config/openshell/gateways/kubernetes/mtls/ca.crt
+kubectl -n openshell get secret openshell-client-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > ~/.config/openshell/gateways/kubernetes/mtls/tls.crt
+kubectl -n openshell get secret openshell-client-tls -o jsonpath='{.data.tls\.key}' | base64 -d > ~/.config/openshell/gateways/kubernetes/mtls/tls.key
+
 openshell -g kubernetes status
 ```
 
-Expect `Status: Connected`.
+Expect `Status: Connected` and `Authentication: Authenticated (mTLS transport)`.
 
 > **Note:** Keep the port-forward alive for `openshell` commands to work. If the gateway pod
-> restarts, it dies — just re-run it.
+> restarts, it dies — re-run it, and re-copy the bundle above, because a `helm upgrade` of the
+> gateway regenerates the secret.
 
-### Step 4: Deploy the Release and Create the Sandbox
+### Step 5: Make the Agent Image Available to the Cluster
 
-Deploy OVMS and Metrics Manager, but leave the traffic-agent Deployment out — the sandbox
-replaces it:
+The sandbox image is resolved by the cluster's container runtime, not by Docker. Import the
+locally built image into containerd using a tag **other than** `latest`: Kubernetes defaults
+`imagePullPolicy` to `Always` for `:latest`, which pulls from the registry and silently shadows
+your local build, and OpenShell's `--driver-config-json` does not accept an `image_pull_policy`
+override.
+
+```bash
+docker tag intel/smart-traffic-intersection-agent:latest intel/smart-traffic-intersection-agent:local
+docker save intel/smart-traffic-intersection-agent:local -o /tmp/stia-agent.tar
+sudo k3s ctr images import /tmp/stia-agent.tar
+```
+
+### Step 6: Deploy the Release and Create the Sandbox
+
+Deploy OVMS and Metrics Manager. With `openshell.enabled=true` the chart renders neither a
+traffic-agent `Deployment` nor a `Service` — the sandbox replaces both:
 
 ```bash
 helm install stia . -n <your-namespace> --create-namespace \
@@ -325,7 +387,7 @@ Then create the sandbox. The script reads OVMS/Metrics Manager/MQTT broker Servi
 VLM settings straight from the release's Helm values:
 
 ```bash
-export REGISTRY="intel/" TAG="latest"
+export REGISTRY="intel/" TAG="local"
 ./chart/openshell-helm.sh up --namespace <your-namespace>
 ```
 
@@ -333,28 +395,33 @@ Pass `MQTT_HOST=<broker-service>.<broker-namespace>.svc.cluster.local` as an env
 broker's Service name/namespace don't match the release's `mqtt.serviceName`/`mqtt.brokerNamespace`
 values, or `MQTT_WS_PORT=<port>` if the broker's plaintext WebSocket listener isn't on `1885`.
 
-`REGISTRY` must match the prefix of the locally built agent image (note the trailing slash);
-without it the script falls back to an unqualified image name and the pod lands in
-`ImagePullBackOff`.
+`REGISTRY` must match the prefix of the image imported in Step 5 (note the trailing slash), and
+`TAG` must match its tag. The script refuses `TAG=latest` for the reason given in Step 5.
 
-### Step 5: Verify
+### Step 7: Verify
 
 ```bash
-openshell -g kubernetes sandbox list
-openshell -g kubernetes policy get <sandbox-name> --base
-kubectl get pod -n openshell -o jsonpath='{.items[*].spec.runtimeClassName}{"\n"}'
+openshell -g kubernetes --workspace openshell sandbox list
+openshell -g kubernetes --workspace openshell policy get stia-traffic-agent --base
+kubectl get pod -n <your-namespace> -o jsonpath='{.items[*].spec.runtimeClassName}{"\n"}'
 ```
 
 - `sandbox list` should report `Ready`.
 - `policy get` should show `Status: Effective` with three `enforcement: enforce` endpoints
-  (broker WebSocket, OVMS REST, Metrics Manager REST), each bound to `/usr/local/bin/python`,
+  (broker WebSocket, OVMS REST, Metrics Manager REST), each bound to `/app/.venv/bin/python`,
   plus the Landlock `read_only`/`read_write` filesystem policy.
 - The sandbox pod's `runtimeClassName` should be `kata-qemu`. To confirm the VM is real, compare
-  kernels: `kubectl exec <sandbox-pod> -n openshell -c agent -- uname -r` differs from `uname -r`
-  on the host.
+  kernels: `kubectl exec <sandbox-pod> -n <your-namespace> -c agent -- uname -r` differs from
+  `uname -r` on the host.
+
+The sandbox pod is named `<workspace>--<sandbox>`, that is `openshell--stia-traffic-agent`. The
+`<workspace>--` prefix is applied by the gateway and cannot be removed; the script scopes all of
+its calls to an OpenShell workspace named `openshell`, which it creates if missing.
 
 The script forwards the API to `http://localhost:8081` and the UI to `http://localhost:7860`.
-Agent output is written to `chart/.openshell-sandbox-traffic-agent.log`.
+Both forwards are managed by OpenShell (`openshell forward list`) rather than `kubectl
+port-forward`, because the agent listens inside the supervisor's network namespace and is
+therefore unreachable from the pod's root namespace.
 
 To remove the sandbox:
 
@@ -400,6 +467,15 @@ To uninstall Trusted Compute from the k3s nodes after you have removed the appli
 ```bash
 ./chart/openshell-helm.sh down --namespace <your-namespace>
 helm uninstall openshell -n <openshell-namespace>
+kubectl delete secret openshell-client-tls -n <your-namespace>
+```
+
+Uninstalling the chart does not remove the OpenShell CLI or its local state. To remove those as
+well:
+
+```bash
+sudo dpkg -r openshell
+rm -rf ~/.config/openshell
 ```
 
 ## Troubleshooting
