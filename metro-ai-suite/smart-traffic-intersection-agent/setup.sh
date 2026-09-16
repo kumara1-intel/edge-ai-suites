@@ -45,7 +45,7 @@ export DEPS_DIR="$CLONE_PATH/metro-ai-suite/metro-vision-ai-app-recipe"
 export RI_DIR="$DEPS_DIR/$SAMPLE_APP"
 export OVMS_CONFIG_DIR="${APP_DIR}/.ovms"
 
-source "${APP_DIR}/openshell.sh"
+source "${APP_DIR}/openshell-docker.sh"
 configure_openshell || return 1
 
 if [ "$ENABLE_TC" = "true" ]; then

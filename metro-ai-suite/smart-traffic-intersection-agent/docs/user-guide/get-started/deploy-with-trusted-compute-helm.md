@@ -239,75 +239,77 @@ Follow these verification steps to ensure the application is running correctly:
   kubectl logs -l app=stia-traffic-agent -n <your-namespace> -f
   ```
 
-## 6. Run the Traffic Agent as an OpenShell Sandbox (Alternative)
+## 6. Run the Traffic Agent as an OpenShell Sandbox
 
-As an alternative to the Deployment-based traffic-agent above, you can run it as an OpenShell
-sandbox. This adds a second isolation layer on top of Trusted Compute: the agent process runs
+As an alternative to deploying the traffic-agent as a standard Kubernetes `Deployment`,
+you can run it as an OpenShell sandbox. This adds a second isolation layer on top of Trusted Compute: the agent process runs
 under a Landlock filesystem policy and all of its egress is forced through OpenShell's L7 proxy,
 which only permits the three endpoints the agent actually needs. Combined with the `kata-qemu`
 runtime class, the agent also runs inside its own hardware-isolated VM with a separate kernel.
 
-### Step 1: Install the OpenShell Gateway
+### Step 1: Install the Agent Sandbox CRD/Controller
 
-Deploy the OpenShell gateway into the cluster via its Helm chart:
+Install the [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) CRD
+and controller before installing the OpenShell chart. Check the
+[releases page](https://github.com/kubernetes-sigs/agent-sandbox/releases) for the latest
+version and update `v1.0.2` below if needed:
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.2/sandbox.yaml
+kubectl get pods -n agent-sandbox-system
+```
+
+### Step 2: Install the OpenShell Gateway
+
+Deploy the OpenShell gateway into the cluster via its Helm chart. Check the
+[package listing](https://github.com/NVIDIA/OpenShell/pkgs/container/openshell%2Fhelm-chart)
+for the latest version and update `0.0.116` below if needed:
+
+If your cluster requires a corporate proxy for internet egress, configure it on the OpenShell
+gateway via `upstreamProxy`, replacing the placeholder values below with your proxy URL and
+no-proxy list:
 
 ```bash
 helm install openshell oci://ghcr.io/nvidia/openshell/helm-chart --version 0.0.116 \
   -n openshell --create-namespace \
   --set server.defaultRuntimeClassName=kata-qemu \
-  --set server.sandboxImagePullPolicy=IfNotPresent
+  --set upstreamProxy.url=<your-proxy-url> \       # omit if no corporate proxy is required
+  --set upstreamProxy.noProxy=<your-no-proxy-list> # omit if no corporate proxy is required
 ```
 
-- `server.defaultRuntimeClassName=kata-qemu` makes every sandbox pod run inside a Kata VM.
-  Omit it if your cluster has no `kata-qemu` RuntimeClass.
-- `server.sandboxImagePullPolicy=IfNotPresent` is required when the agent image is only
-  present in the node's local container store (for example after `k3s ctr images import`).
-  With the default `Always`, the kubelet re-pulls from the registry and silently discards
-  the locally imported image.
+- `server.defaultRuntimeClassName=kata-qemu` makes every sandbox pod run inside a TC VM.
 
-See the [Helm chart README](https://github.com/NVIDIA/OpenShell/blob/main/deploy/helm/openshell/README.md) for available versions and configuration.
-
-### Step 2: Install the Agent Sandbox CRD/Controller
-
-The OpenShell Kubernetes compute driver provisions sandboxes as
-[kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) resources, so
-the CRD and controller must be installed in the cluster first:
-
-```bash
-kubectl apply -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.1/sandbox.yaml
-kubectl get pods -n agent-sandbox-system
-```
+Only `http://` proxy endpoints are supported (TLS `CONNECT` egress through it). See the
+[OpenShell Kubernetes setup guide](https://docs.nvidia.com/openshell/kubernetes/setup) and
+[Configure a Corporate Upstream Proxy](https://docs.nvidia.com/openshell/kubernetes/setup#configure-a-corporate-upstream-proxy)
+for detailed install/upgrade instructions beyond the steps above.
 
 ### Step 3: Register the Gateway with the OpenShell CLI
+
+The chart enables mTLS by default, so the CLI needs the generated client bundle to verify the
+gateway's certificate over the port-forward:
+
+```bash
+mkdir -p ~/.config/openshell/gateways/k8s/mtls
+kubectl -n openshell get secret openshell-client-tls -o jsonpath='{.data.ca\.crt}'  | base64 -d > ~/.config/openshell/gateways/k8s/mtls/ca.crt
+kubectl -n openshell get secret openshell-client-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > ~/.config/openshell/gateways/k8s/mtls/tls.crt
+kubectl -n openshell get secret openshell-client-tls -o jsonpath='{.data.tls\.key}' | base64 -d > ~/.config/openshell/gateways/k8s/mtls/tls.key
+```
 
 The sandbox is created through the OpenShell CLI, which needs to reach the gateway:
 
 ```bash
 kubectl port-forward -n openshell svc/openshell 8080:8080 &
-openshell gateway add kubernetes --server https://127.0.0.1:8080
+openshell gateway add https://127.0.0.1:8080 --local --name kubernetes
 openshell -g kubernetes status
 ```
 
 Expect `Status: Connected`.
 
-> **Note:** This port-forward must stay alive for any `openshell` command to work. It is killed
-> whenever the gateway pod restarts (including on `helm upgrade`), after which the CLI reports
-> `Connection refused (os error 111)` — just re-run the port-forward.
+> **Note:** Keep the port-forward alive for `openshell` commands to work. If the gateway pod
+> restarts, it dies — just re-run it.
 
-### Step 4: Expose a Plaintext MQTT WebSocket Listener
-
-OpenShell's L7 proxy cannot inspect TLS-wrapped traffic, so the Smart Intersection broker must
-offer a plaintext WebSocket listener for the sandbox to connect through. Add the following to the
-broker's `mosquitto-secure.conf` and expose port `1885` on its Service and Deployment:
-
-```conf
-listener 1885
-protocol websockets
-```
-
-Keep this listener on the in-cluster ClusterIP network only — never expose it externally.
-
-### Step 5: Deploy the Release and Create the Sandbox
+### Step 4: Deploy the Release and Create the Sandbox
 
 Deploy OVMS and Metrics Manager, but leave the traffic-agent Deployment out — the sandbox
 replaces it:
@@ -319,22 +321,23 @@ helm install stia . -n <your-namespace> --create-namespace \
   --set ovms.gpu.enabled=false
 ```
 
-Then create the sandbox. The script reads OVMS/Metrics Manager Service DNS and the VLM settings
-straight from the release's Helm values:
+Then create the sandbox. The script reads OVMS/Metrics Manager/MQTT broker Service DNS and the
+VLM settings straight from the release's Helm values:
 
 ```bash
 export REGISTRY="intel/" TAG="latest"
-./chart/openshell-sandbox.sh up \
-  --release stia --namespace <your-namespace> --gateway kubernetes \
-  --mqtt-host smart-intersection-broker.<broker-namespace>.svc.cluster.local \
-  --mqtt-ws-port 1885
+./chart/openshell-helm.sh up --namespace <your-namespace>
 ```
+
+Pass `MQTT_HOST=<broker-service>.<broker-namespace>.svc.cluster.local` as an env var if the
+broker's Service name/namespace don't match the release's `mqtt.serviceName`/`mqtt.brokerNamespace`
+values, or `MQTT_WS_PORT=<port>` if the broker's plaintext WebSocket listener isn't on `1885`.
 
 `REGISTRY` must match the prefix of the locally built agent image (note the trailing slash);
 without it the script falls back to an unqualified image name and the pod lands in
 `ImagePullBackOff`.
 
-### Step 6: Verify
+### Step 5: Verify
 
 ```bash
 openshell -g kubernetes sandbox list
@@ -356,7 +359,7 @@ Agent output is written to `chart/.openshell-sandbox-traffic-agent.log`.
 To remove the sandbox:
 
 ```bash
-./chart/openshell-sandbox.sh down --release stia --namespace <your-namespace> --gateway kubernetes
+./chart/openshell-helm.sh down --namespace <your-namespace>
 ```
 
 ## 7. Clean Up Deployment
@@ -395,7 +398,7 @@ To uninstall Trusted Compute from the k3s nodes after you have removed the appli
 **Step 4. Uninstall the OpenShell Gateway** (if deployed with `openshell.enabled=true`):
 
 ```bash
-./chart/openshell-sandbox.sh down --release stia --namespace <your-namespace> --gateway kubernetes
+./chart/openshell-helm.sh down --namespace <your-namespace>
 helm uninstall openshell -n <openshell-namespace>
 ```
 

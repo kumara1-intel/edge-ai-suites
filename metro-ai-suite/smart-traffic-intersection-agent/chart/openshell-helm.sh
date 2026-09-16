@@ -3,13 +3,9 @@
 # Copyright (C) 2026 Intel Corporation
 # SPDX-License-Identifier: Apache-2.0
 #
-# Runs the Traffic Intersection Agent as an OpenShell sandbox pod alongside a Helm
-# release deployed with `openshell.enabled=true`, using a --gateway already registered
-# with a Kubernetes/Agent-Sandbox compute driver.
+# Runs the Traffic Intersection Agent as an OpenShell sandbox pod alongside a Helm release
+# deployed with `openshell.enabled=true'
 #
-# Usage:
-#   ./openshell-sandbox.sh up   --mqtt-host broker.default.svc.cluster.local --mqtt-ws-port 1885 [--release stia] [--namespace default] [--gateway kubernetes]
-#   ./openshell-sandbox.sh down [--release stia] [--namespace default] [--gateway kubernetes]
 
 set -euo pipefail
 
@@ -19,29 +15,6 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
-
-RELEASE="stia"
-NAMESPACE="default"
-BACKEND_PORT="8081"
-UI_PORT="7860"
-GATEWAY="kubernetes"
-MQTT_HOST=""
-MQTT_WS_PORT=""
-
-usage() {
-    cat <<EOF
-Usage: $0 <up|down> [options]
-
-Options:
-  --release NAME        Helm release name (default: stia)
-  --namespace NS        Kubernetes namespace the release is installed in (default: default)
-  --backend-port PORT   Local port to forward the agent API to (default: 8081)
-  --ui-port PORT        Local port to forward the agent UI to (default: 7860)
-  --gateway NAME        OpenShell gateway registered with a Kubernetes compute driver (default: kubernetes)
-  --mqtt-host HOST      Address (Service DNS name or IP) of the broker's plaintext WebSocket listener (required for 'up')
-  --mqtt-ws-port PORT   Port of the broker's plaintext WebSocket listener (required for 'up')
-EOF
-}
 
 log() { echo -e "${BLUE}==> $*${NC}"; }
 err() { echo -e "${RED}ERROR: $*${NC}" >&2; }
@@ -53,25 +26,41 @@ require_cmd() {
     fi
 }
 
+RELEASE="stia"
+BACKEND_PORT="8081"
+UI_PORT="7860"
+GATEWAY="kubernetes"
+MQTT_HOST=""
+MQTT_WS_PORT="1885"
+NAMESPACE="${NAMESPACE:-default}"
+
+usage() {
+    cat <<EOF
+Usage: $0 <up|down> [options]
+
+Options:
+  --namespace NS        Kubernetes namespace the release is installed in (default: default)
+EOF
+}
+
 sandbox_name() {
-    # OpenShell sandbox names are capped at 19 characters.
+    # capped at 19 characters
     echo "stia-$(printf '%s-%s' "$RELEASE" "$NAMESPACE" | tr '[:upper:]_' '[:lower:]-' | cut -c1-14)"
 }
 
-# ClusterIP Service port (by name) for a service in the release's namespace.
 service_port() {
     local service="$1" port_name="$2"
     kubectl get svc "$service" -n "$NAMESPACE" \
         -o jsonpath="{.spec.ports[?(@.name==\"${port_name}\")].port}"
 }
 
-# Read an ovms.env.* value from the release so the sandboxed agent matches the OVMS-registered model id.
+# matches the OVMS-registered model id
 ovms_value() {
     helm get values -a "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null \
         | python3 -c "import json,sys; print(json.load(sys.stdin).get('ovms',{}).get('env',{}).get(sys.argv[1],''))" "$1"
 }
 
-# Read a top-level.nested value (dot-separated path) from the release's effective values.
+# dot-separated path into the release's effective values
 chart_value() {
     helm get values -a "$RELEASE" -n "$NAMESPACE" -o json 2>/dev/null \
         | python3 -c "
@@ -88,11 +77,6 @@ up() {
     require_cmd kubectl
     require_cmd helm
     require_cmd python3
-
-    if [ -z "$MQTT_HOST" ] || [ -z "$MQTT_WS_PORT" ]; then
-        err "--mqtt-host and --mqtt-ws-port are required (broker's plaintext WebSocket listener)."
-        exit 1
-    fi
 
     if ! openshell -g "$GATEWAY" status >/dev/null 2>&1; then
         err "OpenShell gateway '${GATEWAY}' is not reachable. Install/register a Kubernetes-driver gateway first."
@@ -120,6 +104,7 @@ up() {
     vlm_device=$(ovms_value targetDevice)
     vlm_weight_format=$(ovms_value weightFormat)
     vlm_max_tokens=$(ovms_value maxCompletionTokens)
+    
     if [ -z "$vlm_model" ]; then
         err "Could not read ovms.env.modelName from release '${RELEASE}' values (helm get values). Is the release installed?"
         exit 1
@@ -132,17 +117,34 @@ up() {
     weather_mock=$(chart_value env.weatherMock)
     density_threshold=$(chart_value traffic.highDensityThreshold)
 
-    local sandbox agent_image agent_log
+    if [ -z "$MQTT_HOST" ]; then
+        MQTT_HOST=$(chart_value mqtt.host)
+        if [ -z "$MQTT_HOST" ]; then
+            local mqtt_service mqtt_ns
+            mqtt_service=$(chart_value mqtt.serviceName)
+            mqtt_ns=$(chart_value mqtt.brokerNamespace)
+            if [ -z "$mqtt_ns" ]; then
+                mqtt_ns="$NAMESPACE"
+            fi
+            if [ -z "$mqtt_service" ]; then
+                err "Could not derive the broker host from release '${RELEASE}' values (mqtt.host/mqtt.serviceName). Pass --mqtt-host explicitly."
+                exit 1
+            fi
+            MQTT_HOST="${mqtt_service}.${mqtt_ns}.svc.cluster.local"
+        fi
+    fi
+
+    local sandbox agent_image
     sandbox=$(sandbox_name)
     agent_image="${REGISTRY:-}smart-traffic-intersection-agent:${TAG:-latest}"
-    agent_log="$(dirname "${BASH_SOURCE[0]}")/.openshell-sandbox-traffic-agent.log"
 
+    #delete older sanbox pod
     openshell -g "$GATEWAY" sandbox delete "$sandbox" >/dev/null 2>&1 || true
 
     log "Creating OpenShell sandbox '$sandbox' (gateway '$GATEWAY', pod in namespace '$NAMESPACE') for release '$RELEASE'..."
-    if ! openshell -g "$GATEWAY" sandbox create \
-        --name "$sandbox" \
-        --from "$agent_image" \
+    # create runs the entrypoint and blocks for the agent's lifetime, so detach it
+    nohup openshell -g "$GATEWAY" sandbox create --name "$sandbox" --from "$agent_image" \
+        --forward "$BACKEND_PORT" --forward "$UI_PORT" \
         --env "VLM_BASE_URL=http://${ovms_addr}:${ovms_port}" \
         --env "METRICS_MANAGER_URL=http://${metrics_addr}:${metrics_port}" \
         --env "METRICS_STREAM_URL=http://${metrics_addr}:${metrics_port}/metrics/stream" \
@@ -165,32 +167,30 @@ up() {
         --env "INTERSECTION_LONGITUDE=${intersection_lon}" \
         --env "WEATHER_MOCK=${weather_mock:-false}" \
         --env "HIGH_DENSITY_THRESHOLD=${density_threshold:-10}" \
-        --no-tty -- true; then
-        exit 1
-    fi
+        --no-tty -- bash docker-entrypoint.sh < /dev/null > /dev/null 2>&1 &
 
+    local i
+    for i in $(seq 1 60); do
+        if openshell -g "$GATEWAY" sandbox get "$sandbox" >/dev/null 2>&1; then break; fi
+        if [ "$i" -eq 60 ]; then
+            err "Sandbox '$sandbox' did not come up."
+            exit 1
+        fi
+        sleep 2
+    done
+
+    # egress is deny-by-default until this lands; the agent retries until then
     log "Applying network policy (OVMS/Metrics/MQTT reached via in-cluster Service DNS)..."
     openshell -g "$GATEWAY" policy update "$sandbox" \
         --add-endpoint "${MQTT_HOST}:${MQTT_WS_PORT}:read-write:websocket:enforce" \
         --add-endpoint "${ovms_addr}:${ovms_port}:read-write:rest:enforce" \
         --add-endpoint "${metrics_addr}:${metrics_port}:read-write:rest:enforce" \
-        --binary /usr/local/bin/python \
-        --wait
-
-    log "Starting the agent inside the sandbox..."
-    # Detached so piping this script (e.g. into 'tail') doesn't hang waiting for EOF.
-    nohup openshell -g "$GATEWAY" sandbox exec -n "$sandbox" -- \
-        bash -lc 'export PATH=/app/.venv/bin:$PATH; cd /app && exec bash docker-entrypoint.sh' \
-        < /dev/null > "$agent_log" 2>&1 &
-
-    openshell -g "$GATEWAY" forward start --background "$BACKEND_PORT" "$sandbox" < /dev/null >> "$agent_log" 2>&1
-    openshell -g "$GATEWAY" forward start --background "$UI_PORT" "$sandbox" < /dev/null >> "$agent_log" 2>&1
+        --binary /usr/local/bin/python --wait
 
     echo -e "${GREEN}Traffic Intersection Agent running as OpenShell sandbox '$sandbox'.${NC}"
     echo -e "${CYAN}Access API Docs -> http://localhost:${BACKEND_PORT}/docs${NC}"
     echo -e "${CYAN}Access UI        -> http://localhost:${UI_PORT}${NC}"
-    echo -e "${CYAN}Agent log        -> ${agent_log}${NC}"
-    echo -e "${CYAN}Stop forwards    -> openshell -g ${GATEWAY} forward stop ${BACKEND_PORT} ${sandbox}${NC}"
+    echo -e "${CYAN}Stop the agent   -> $0 down --namespace ${NAMESPACE}${NC}"
 }
 
 down() {
@@ -202,24 +202,12 @@ down() {
 }
 
 COMMAND="${1:-}"
-[ $# -gt 0 ] && shift
-
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --release) RELEASE="$2"; shift 2 ;;
-        --namespace) NAMESPACE="$2"; shift 2 ;;
-        --backend-port) BACKEND_PORT="$2"; shift 2 ;;
-        --ui-port) UI_PORT="$2"; shift 2 ;;
-        --gateway) GATEWAY="$2"; shift 2 ;;
-        --mqtt-host) MQTT_HOST="$2"; shift 2 ;;
-        --mqtt-ws-port) MQTT_WS_PORT="$2"; shift 2 ;;
-        -h|--help) usage; exit 0 ;;
-        *) err "Unknown option: $1"; usage; exit 1 ;;
-    esac
-done
+if [ "${2:-}" = "--namespace" ]; then
+    NAMESPACE="${3:-}"
+fi
 
 case "$COMMAND" in
-    up) up ;;
-    down) down ;;
+    up|down) "$COMMAND" ;;
+    -h|--help) usage ;;
     *) usage; exit 1 ;;
 esac
