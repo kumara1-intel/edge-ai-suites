@@ -35,6 +35,19 @@ MQTT_HOST="${MQTT_HOST:-}"
 MQTT_WS_PORT="${MQTT_WS_PORT:-1885}"
 NAMESPACE="${NAMESPACE:-default}"
 CREATE_LOG="${TMPDIR:-/tmp}/openshell-sandbox-create.log"
+POLICY_TEMPLATE="$(dirname "$0")/openshell-policy.yaml"
+
+# Runs inside the sandbox: the Kubernetes driver rejects 'protocol: tcp', so cluster DNS is only
+# resolvable through the OpenShell egress proxy, and paho-mqtt needs to be pointed at it because
+# it ignores HTTP_PROXY.
+SANDBOX_CMD='
+cd /app || exit 1
+proxy="${HTTP_PROXY#*://}"; proxy="${proxy%/}"
+if [ -n "$proxy" ]; then
+    export MQTT_PROXY_HOST="${proxy%%:*}" MQTT_PROXY_PORT="${proxy##*:}"
+fi
+exec bash docker-entrypoint.sh
+'
 
 usage() {
     cat <<EOF
@@ -156,9 +169,25 @@ up() {
     #delete older sanbox pod
     osh sandbox delete "$sandbox" >/dev/null 2>&1 || true
 
+    if [ ! -f "$POLICY_TEMPLATE" ]; then
+        err "Policy template '$POLICY_TEMPLATE' not found."
+        exit 1
+    fi
+    local policy_file
+    policy_file=$(mktemp "${TMPDIR:-/tmp}/openshell-policy.XXXXXX.yaml")
+    trap "rm -f '$policy_file'" EXIT
+    sed -e "s|\${MQTT_HOST}|${MQTT_HOST}|g" \
+        -e "s|\${MQTT_WS_PORT}|${MQTT_WS_PORT}|g" \
+        -e "s|\${OVMS_HOST}|${ovms_addr}|g" \
+        -e "s|\${OVMS_PORT}|${ovms_port}|g" \
+        -e "s|\${METRICS_HOST}|${metrics_addr}|g" \
+        -e "s|\${METRICS_PORT}|${metrics_port}|g" \
+        "$POLICY_TEMPLATE" > "$policy_file"
+
     log "Creating OpenShell sandbox '$sandbox' (gateway '$GATEWAY', workspace '$WORKSPACE') for release '$RELEASE' in namespace '$NAMESPACE'..."
     # create runs the entrypoint and blocks for the agent's lifetime, so detach it
     nohup openshell -g "$GATEWAY" --workspace "$WORKSPACE" sandbox create --name "$sandbox" --from "$agent_image" \
+        --policy "$policy_file" \
         --forward "$BACKEND_PORT" \
         --env "VLM_BASE_URL=http://${ovms_addr}:${ovms_port}" \
         --env "METRICS_MANAGER_URL=http://${metrics_addr}:${metrics_port}" \
@@ -182,7 +211,7 @@ up() {
         --env "INTERSECTION_LONGITUDE=${intersection_lon}" \
         --env "WEATHER_MOCK=${weather_mock:-false}" \
         --env "HIGH_DENSITY_THRESHOLD=${density_threshold:-10}" \
-        --no-tty -- bash -c 'cd /app && exec bash docker-entrypoint.sh' < /dev/null > "$CREATE_LOG" 2>&1 &
+        --no-tty -- bash -c "$SANDBOX_CMD" < /dev/null > "$CREATE_LOG" 2>&1 &
 
     # the supervisor starts in the workspace dir, so wait on the phase rather than mere existence
     local i phase
@@ -208,14 +237,6 @@ up() {
     # 'sandbox create' accepts only one --forward, so the UI port is forwarded separately
     osh forward stop "$UI_PORT" "$sandbox" >/dev/null 2>&1 || true
     osh forward start "$UI_PORT" "$sandbox" --background >/dev/null 2>&1
-
-    # egress is deny-by-default until this lands; the agent retries until then
-    log "Applying network policy (OVMS/Metrics/MQTT reached via in-cluster Service DNS)..."
-    osh policy update "$sandbox" \
-        --add-endpoint "${MQTT_HOST}:${MQTT_WS_PORT}:read-write:websocket:enforce" \
-        --add-endpoint "${ovms_addr}:${ovms_port}:read-write:rest:enforce" \
-        --add-endpoint "${metrics_addr}:${metrics_port}:read-write:rest:enforce" \
-        --binary /app/.venv/bin/python --wait
 
     echo -e "${GREEN}Traffic Intersection Agent running as OpenShell sandbox '$sandbox'.${NC}"
     echo -e "${CYAN}Access API Docs -> http://localhost:${BACKEND_PORT}/docs${NC}"

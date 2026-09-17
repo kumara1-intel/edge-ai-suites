@@ -1,0 +1,81 @@
+# Copyright (C) 2025 Intel Corporation
+# SPDX-License-Identifier: Apache-2.0
+#
+# OpenShell sandbox policy for the Traffic Intersection Agent.
+# openshell-helm.sh substitutes the ${...} placeholders and passes the result to
+# 'sandbox create --policy', so the egress rules are active before the agent starts.
+
+version: 1
+
+# Static sections are locked at sandbox creation; changing them needs a new sandbox.
+# OpenShell already adds /usr, /lib, /etc, /var/log (read-only), /tmp and the workdir
+# (read-write) as baseline paths, so only /app is listed here.
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /app
+  read_write: []
+
+landlock:
+  compatibility: best_effort
+
+# 'process' is deliberately omitted: the Kubernetes driver selects the numeric identity
+# from the image (uid 1000), and named users other than 'sandbox' are rejected here.
+
+network_policies:
+  # The agent runs 'python run.py' from PATH, so the engine resolves the interpreter to
+  # /usr/local/bin/python3.<minor>; the venv symlinks are matched on cmdline.
+  mqtt_broker:
+    name: mqtt-broker
+    endpoints:
+      - host: ${MQTT_HOST}
+        port: ${MQTT_WS_PORT}
+        protocol: websocket
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - { path: "/usr/local/bin/python3*" }
+      - { path: "/app/.venv/bin/python*" }
+
+  ovms:
+    name: ovms
+    endpoints:
+      - host: ${OVMS_HOST}
+        port: ${OVMS_PORT}
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+    binaries:
+      - { path: "/usr/local/bin/python3*" }
+      - { path: "/app/.venv/bin/python*" }
+
+  metrics_manager:
+    name: metrics-manager
+    endpoints:
+      - host: ${METRICS_HOST}
+        port: ${METRICS_PORT}
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: "/**"
+          - allow:
+              method: HEAD
+              path: "/**"
+    binaries:
+      - { path: "/usr/local/bin/python3*" }
+      - { path: "/app/.venv/bin/python*" }
+
+  # Remove this block to keep the agent on mock weather data.
+  weather:
+    name: weather-api
+    endpoints:
+      - host: api.weather.gov
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - { path: "/usr/local/bin/python3*" }
+      - { path: "/app/.venv/bin/python*" }

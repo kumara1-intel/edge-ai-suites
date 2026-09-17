@@ -261,18 +261,19 @@ kubectl get pods -n agent-sandbox-system
 
 ### Step 2: Install the OpenShell CLI
 
-The sandbox is created through the OpenShell CLI, which is a separate download from the Helm
-chart. Install it from the
-[releases page](https://github.com/NVIDIA/OpenShell/releases) and keep its version identical to
-the gateway chart version used in the next step:
+Install the OpenShell CLI with the official installer. Set `OPENSHELL_VERSION` to the same
+version as the gateway chart in the next step:
 
 ```bash
-OPENSHELL_VERSION=0.0.116
-curl -LO https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_VERSION}/openshell_${OPENSHELL_VERSION}-1_amd64.deb
-curl -LO https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_VERSION}/openshell-checksums-sha256.txt
-sha256sum -c --ignore-missing openshell-checksums-sha256.txt
-sudo dpkg -i openshell_${OPENSHELL_VERSION}-1_amd64.deb
+export OPENSHELL_VERSION=0.0.116
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
 openshell --version
+```
+
+If `openshell` is not found, add the installer's target directory to your `PATH`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ### Step 3: Install the OpenShell Gateway
@@ -474,7 +475,7 @@ Uninstalling the chart does not remove the OpenShell CLI or its local state. To 
 well:
 
 ```bash
-sudo dpkg -r openshell
+rm -f "$(command -v openshell)"
 rm -rf ~/.config/openshell
 ```
 
