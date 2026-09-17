@@ -399,6 +399,13 @@ values, or `MQTT_WS_PORT=<port>` if the broker's plaintext WebSocket listener is
 `REGISTRY` must match the prefix of the image imported in Step 5 (note the trailing slash), and
 `TAG` must match its tag. The script refuses `TAG=latest` for the reason given in Step 5.
 
+The sandbox policy is `chart/openshell-policy.yaml`. The script substitutes the Service addresses
+into it and passes it to `sandbox create --policy`, so egress is enforced from the moment the
+agent starts. Edit that file to change the filesystem or network rules; the `${...}` placeholders
+are filled in by the script and must be left alone. The `weather` block allows `api.weather.gov`,
+which needs outbound internet access from the cluster — remove the block to keep the agent on
+mock weather data.
+
 ### Step 7: Verify
 
 ```bash
@@ -408,9 +415,10 @@ kubectl get pod -n <your-namespace> -o jsonpath='{.items[*].spec.runtimeClassNam
 ```
 
 - `sandbox list` should report `Ready`.
-- `policy get` should show `Status: Effective` with three `enforcement: enforce` endpoints
-  (broker WebSocket, OVMS REST, Metrics Manager REST), each bound to `/app/.venv/bin/python`,
-  plus the Landlock `read_only`/`read_write` filesystem policy.
+- `policy get` should show `Status: Effective` with the `enforcement: enforce` endpoints from
+  `chart/openshell-policy.yaml` (broker WebSocket, OVMS REST, Metrics Manager REST, and weather
+  REST unless removed), each bound to the `python` binary globs, plus the Landlock
+  `read_only`/`read_write` filesystem policy.
 - The sandbox pod's `runtimeClassName` should be `kata-qemu`. To confirm the VM is real, compare
   kernels: `kubectl exec <sandbox-pod> -n <your-namespace> -c agent -- uname -r` differs from
   `uname -r` on the host.
