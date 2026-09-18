@@ -262,7 +262,8 @@ To fully remove OpenShell, see the
 
 For Kubernetes-based deployments with Trusted Compute:
 
-- **[Deploy with Helm and Trusted Compute](./get-started/deploy-with-trusted-compute-helm.md)**: Use Helm to deploy the application with Trusted Compute to a Kubernetes cluster for scalable and production-ready deployments with hardware isolation. This guide also covers running the traffic-agent as an OpenShell Agent Sandbox.
+- **[Deploy with Helm and Trusted Compute](./get-started/deploy-with-trusted-compute-helm.md)**: Use Helm to deploy the application with Trusted Compute to a Kubernetes cluster for scalable and production-ready deployments with hardware isolation.
+- **[Run the Traffic Agent as an OpenShell Sandbox](./get-started/deploy-with-openshell-sandbox.md)**: Run the traffic-agent under a Landlock filesystem policy with enforced L7 egress.
 
 ## Learn More
 

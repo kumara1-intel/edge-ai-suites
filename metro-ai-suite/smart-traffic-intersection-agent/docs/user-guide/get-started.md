@@ -422,6 +422,7 @@ source setup.sh --setup
 ./get-started/build-from-source
 ./get-started/deploy-with-helm
 ./get-started/deploy-with-trusted-compute-helm
+./get-started/deploy-with-openshell-sandbox
 ./deploy-with-trusted-compute
 
 :::
